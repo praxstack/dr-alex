@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  G13 nightly eval — DISABLED BY DEFAULT (council + graft-pack: gardener enable pattern).
+
+  This LaunchAgent is shipped intentionally inert: `Disabled` is true and it is NOT loaded.
+  The eval computes WAI-SR-style scores from ENCRYPTED transcripts in memory and logs ONLY
+  scores (never transcript content). It is a RELATIVE drift signal, not an absolute grade
+  (inter-judge absolute calibration failed at r=0.307).
+
+  To ENABLE (one command — you, deliberately):
+      cp tools/launchd/com.dr-alex.eval.plist ~/Library/LaunchAgents/ \
+        && launchctl load -w ~/Library/LaunchAgents/com.dr-alex.eval.plist
+
+  To DISABLE again:
+      launchctl unload -w ~/Library/LaunchAgents/com.dr-alex.eval.plist
+
+  Edit ProgramArguments below to your installed `dr-alex` path (e.g. the uv/venv shim) and
+  set WorkingDirectory to your ~/dr-alex checkout before enabling.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.dr-alex.eval</string>
+
+    <key>Disabled</key>
+    <true/>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/sh</string>
+        <string>-lc</string>
+        <string>dr-alex eval --once</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>REPLACE_WITH_YOUR/dr-alex</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>15</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/dr-alex-eval.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/dr-alex-eval.err.log</string>
+</dict>
+</plist>

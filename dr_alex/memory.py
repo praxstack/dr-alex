@@ -30,6 +30,7 @@ from __future__ import annotations
 import datetime as _dt
 from dataclasses import dataclass, field
 
+from dr_alex import captoken
 from dr_alex import continuity as _continuity
 from dr_alex import memstore, reorient
 from dr_alex.statefile import SessionState
@@ -186,8 +187,11 @@ def assemble(
 
     seed = query if query is not None else (state.last_topic or "")
     hits: list[memstore.Hit] = []
+    # Session-start assembly IS the sanctioned safe path for gated recall (council D3): it
+    # mints a short-lived capability token for the duration of the recall it performs here.
     try:
-        hits = recall_fn(seed, k=k)
+        with captoken.granted():
+            hits = recall_fn(seed, k=k)
     except Exception:  # noqa: BLE001 - a broken store must never break session start
         hits = []
 

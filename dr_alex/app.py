@@ -13,12 +13,24 @@ from datetime import datetime, timezone
 from rich.markup import escape
 from textual import work
 from textual.app import App, ComposeResult
-from textual.containers import Center, VerticalScroll
+from textual.containers import Center, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Input, Static
+from textual.widgets import Input, Label, Static
 
-from dr_alex import engine, fanout, gates, llm, memstore, statefile
+from dr_alex import (
+    captoken,
+    engine,
+    fanout,
+    filevault,
+    gates,
+    llm,
+    memstore,
+    statedb,
+    statefile,
+    telemetry,
+)
 from dr_alex.session import SessionState
+from dr_alex.widgets import HomeworkScreen, MoodBar, rail_data, render_rail
 from safety import crisis_card, crisis_questioning
 from safety.triage import Tier
 
@@ -71,12 +83,28 @@ class DrAlexApp(App[None]):
         layers: base;
     }
 
-    #header {
+    #topbar {
         dock: top;
+        height: auto;
+    }
+
+    #header {
         height: 3;
         padding: 1 3 0 3;
         color: #c9bdf0;
         background: #232839;
+    }
+
+    #fv-banner {
+        display: none;
+        height: auto;
+        padding: 0 3;
+        color: #2a2030;
+        background: #d9a86a;
+        text-style: bold;
+    }
+    #fv-banner.on {
+        display: block;
     }
 
     #chat {
@@ -115,8 +143,13 @@ class DrAlexApp(App[None]):
         padding: 0 2;
     }
 
-    #prompt {
+    #bottombar {
         dock: bottom;
+        height: auto;
+        background: #232839;
+    }
+
+    #prompt {
         margin: 0 2 0 2;
         border: round #4a5170;
         background: #232839;
@@ -127,13 +160,50 @@ class DrAlexApp(App[None]):
     }
 
     #helpbar {
-        dock: bottom;
         height: 1;
         padding: 0 3;
         color: #d9a86a;
         background: #232839;
         content-align: left middle;
     }
+
+    #rail {
+        dock: right;
+        width: 28;
+        padding: 1 2;
+        color: #c9bdf0;
+        background: #232839;
+    }
+
+    MoodBar {
+        height: 3;
+        padding: 0 2;
+        background: #232839;
+        align: left middle;
+    }
+    .mood-label {
+        color: #9aa0b5;
+        padding: 1 1 0 0;
+        width: auto;
+    }
+    .mood-chip {
+        min-width: 4;
+        margin: 0 0 0 1;
+    }
+
+    #hw-box {
+        width: 72;
+        max-width: 90%;
+        height: auto;
+        max-height: 90%;
+        padding: 2 3;
+        border: round #6fae9f;
+        background: #232839;
+    }
+    .hw-row { height: auto; margin: 1 0; }
+    .hw-done { min-width: 8; margin-right: 2; }
+    .hw-item { padding: 1 0; }
+    HomeworkScreen { align: center middle; background: #1c2030 80%; }
 
     CrisisScreen {
         align: center middle;
@@ -155,6 +225,7 @@ class DrAlexApp(App[None]):
 
     BINDINGS = [
         ("f1", "crisis", "Help"),
+        ("f2", "homework", "Homework"),
         ("ctrl+c", "quit", "Quit"),
     ]
 
@@ -172,18 +243,27 @@ class DrAlexApp(App[None]):
         self._risk_tier_max = Tier.GREEN
         self._finalized = False
         self._explicit_close = False  # set by /bye|/quit|/exit — distinguishes from a stray exit
+        # Phase 4 mood: capture "arriving" first, then flip to "leaving" for the close chip.
+        self._mood_phase = "open"
+        self._test_traffic = telemetry.is_test_traffic()
 
     # -- layout -----------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        yield Static(
-            f"[b]{PERSONA_TITLE}[/b]  [dim]— {PERSONA_SUBTITLE}[/dim]",
-            id="header",
-            markup=True,
-        )
+        with Vertical(id="topbar"):
+            yield Static(
+                f"[b]{PERSONA_TITLE}[/b]  [dim]— {PERSONA_SUBTITLE}[/dim]",
+                id="header",
+                markup=True,
+            )
+            # G/D2: a loud, persistent FileVault-off banner (hidden until the check fires).
+            yield Static("", id="fv-banner", markup=True)
+        yield Static("", id="rail", markup=True)
         yield VerticalScroll(id="chat")
-        yield Static("Feeling unsafe? press F1 for help", id="helpbar", markup=True)
-        yield Input(placeholder="Type to talk to Alex…  (/help  ·  F1 for help)", id="prompt")
+        with Vertical(id="bottombar"):
+            yield MoodBar(phase="open")
+            yield Static("Feeling unsafe? press F1 for help  ·  F2 for homework", id="helpbar", markup=True)
+            yield Input(placeholder="Type to talk to Alex…  (/help  ·  F1 for help)", id="prompt")
 
     def on_mount(self) -> None:
         self.query_one("#prompt", Input).focus()
@@ -197,10 +277,69 @@ class DrAlexApp(App[None]):
         self._add_message("alex", opener)
         # G8: a loud staleness banner from cheap state (no subprocess), shown immediately.
         self._show_staleness_banner()
+        # Phase 4 session start (cheap, local sqlite): record the session, replay the
+        # one-time repair-ack, read back open homework, surface any late-night clustering,
+        # and paint the right rail. All best-effort — telemetry never breaks a session start.
+        self._phase4_startup()
+        # FileVault check spawns fdesetup — do it off the UI thread so mount never blocks.
+        self._check_filevault()
         # Memory is a session-start READ that shells out to memctl — do it off the UI thread,
         # and only when the store is wired (disabled in tests / degraded environments).
         if memstore.memory_enabled():
             self._start_memory()
+
+    def _phase4_startup(self) -> None:
+        try:
+            statedb.start_session(self._session_id, is_test_traffic=self._test_traffic)
+            # G10: a queued malfunction ack fires here, at a CALM session start — never on a
+            # crisis turn (this path runs before any user message).
+            ack = telemetry.take_repair_ack()
+            if ack:
+                self._add_message("alex", escape(ack))
+            # Homework read-back ("last time you set X — how did it go?").
+            openhw = statedb.open_homework()
+            if openhw:
+                titles = "; ".join(escape(h.title) for h in openhw[:4])
+                self._add_message(
+                    "note",
+                    f"[b]still open from before:[/b] {titles}  [dim](F2 to mark done)[/dim]",
+                )
+            # G18: a gentle, data-driven surface if late-night sessions are clustering.
+            sig = statedb.late_night_signal()
+            if sig.flagged:
+                self._add_message(
+                    "note",
+                    "[dim]I've noticed a few late-night check-ins lately. No judgement — just "
+                    "flagging it gently; sleep tends to be load-bearing for how the days feel.[/dim]",
+                )
+            self._refresh_rail()
+        except Exception:  # noqa: BLE001 — startup telemetry is best-effort
+            pass
+
+    def _refresh_rail(self) -> None:
+        try:
+            data = rail_data()
+            self.query_one("#rail", Static).update(render_rail(data))
+        except Exception:  # noqa: BLE001 — the rail must never break the UI
+            pass
+
+    @work(thread=True, group="filevault")
+    def _check_filevault(self) -> None:
+        try:
+            banner = filevault.warning_banner()
+        except Exception:  # noqa: BLE001
+            banner = None
+        if banner:
+            self.call_from_thread(self._show_filevault_banner, banner)
+
+    def _show_filevault_banner(self, text: str) -> None:
+        """Reveal the persistent, loud FileVault-off banner (non-blocking)."""
+        try:
+            widget = self.query_one("#fv-banner", Static)
+            widget.update(f"⚠ {escape(text)}")
+            widget.add_class("on")
+        except Exception:  # noqa: BLE001
+            pass
 
     def _show_staleness_banner(self) -> None:
         try:
@@ -278,6 +417,30 @@ class DrAlexApp(App[None]):
         if not isinstance(self.screen, CrisisScreen):
             self.push_screen(CrisisScreen())
 
+    def action_homework(self) -> None:
+        """F2 — the homework drawer (list open, mark done)."""
+        if not isinstance(self.screen, HomeworkScreen):
+            self.push_screen(HomeworkScreen())
+
+    def on_mood_bar_picked(self, event: MoodBar.Picked) -> None:
+        """Record a mood chip (open, then close) — always skippable, never blocking."""
+        phase = self._mood_phase
+        if event.value is not None:
+            try:
+                statedb.record_mood(phase, event.value, session_id=self._session_id)
+            except Exception:  # noqa: BLE001
+                pass
+            self._add_message("note", f"[dim]mood noted — {event.value}/10. thanks for marking it.[/dim]")
+            self._refresh_rail()
+        # After the "arriving" chip (chosen or skipped), flip the bar to the "leaving" chip.
+        if phase == "open":
+            self._mood_phase = "close"
+            try:
+                self.query_one(MoodBar).phase = "close"
+                self.query_one(".mood-label", Label).update("And how are you leaving things? (1–10)")
+            except Exception:  # noqa: BLE001
+                pass
+
     # -- the safety-first turn --------------------------------------------
 
     def process_turn(self, text: str) -> None:
@@ -296,6 +459,21 @@ class DrAlexApp(App[None]):
                 "[b]Reach Shreya.[/b] A message you could send her (you send it, not me):\n"
                 f'[i]"{escape(crisis_card.SHREYA_REACH_OUT_DRAFT)}"[/i]',
             )
+            # G9: a RED turn is still a turn — record its trace + encrypted user message.
+            # No malfunction flag and NO capability token minted (retrieval stays unreachable).
+            try:
+                statedb.record_turn_trace(
+                    session_id=self._session_id, tier="RED",
+                    model_version=telemetry.model_version(),
+                    prompt_hash=telemetry.prompt_hash(self._system_prompt, text),
+                    is_test_traffic=self._test_traffic, safety_action="red-card",
+                )
+                statedb.record_transcript(
+                    session_id=self._session_id, role="user", body=text,
+                    tier="RED", is_test_traffic=self._test_traffic,
+                )
+            except Exception:  # noqa: BLE001 — telemetry never blocks the crisis path
+                pass
             return
 
         # GREEN / AMBER -> retrieve, call the model, and gate the reply in a worker.
@@ -306,8 +484,11 @@ class DrAlexApp(App[None]):
     @work(thread=True, exclusive=True, group="llm")
     def _reply(self, tier: Tier, widget: Static, user_text: str) -> None:
         messages = list(self._history)
-        # STEP 1 + 2: book retrieval (after triage) + labeled context assembly.
-        retrieved, book_ctx = engine.retrieve_context(user_text)
+        # STEP 1 + 2: book retrieval (after triage) + labeled context assembly. Triage
+        # (safety_check) already passed for this GREEN/AMBER turn, so mint the short-lived
+        # capability token that book_search requires (council D3).
+        with captoken.granted():
+            retrieved, book_ctx = engine.retrieve_context(user_text)
         # G1: crisis-questioning directive for this AMBER turn (already-asked -> do not re-ask).
         safety_note = engine.safety_probe_note(self._session, tier, user_text)
 
@@ -342,6 +523,12 @@ class DrAlexApp(App[None]):
                 safety_action = "probe-asked"
         engine.trace_turn(tier, retrieved, outcome, safety_action)  # STEP 5
         reply = outcome.text or "(no response)"
+        # G9/G10/D2: persist the turn trace (model_version + prompt_hash + is_test_traffic),
+        # the Fernet-encrypted transcript, and queue a repair-ack if the reply came back empty.
+        engine.record_turn_telemetry(
+            session_id=self._session_id, tier=tier, user_text=user_text,
+            reply_text=outcome.text, outcome=outcome, safety_action=safety_action,
+        )
 
         self._history.append(llm.Message(role="assistant", content=reply))
         self.call_from_thread(widget.update, "[b]Alex[/b]\n" + escape(reply))
@@ -358,6 +545,12 @@ class DrAlexApp(App[None]):
         Only when the store is wired AND a real conversation happened. A '/bye' is an
         explicit close; an incidental exit needs > 2 user turns. Never raises on the way out.
         """
+        # Phase 4: stamp the session's end (drives streaks + the late-night monitor). Runs
+        # independently of the memory store and is best-effort.
+        try:
+            statedb.end_session(self._session_id)
+        except Exception:  # noqa: BLE001
+            pass
         if self._finalized or not memstore.memory_enabled():
             return
         if not fanout.should_finalize(self._user_turns, explicit_close=self._explicit_close):
