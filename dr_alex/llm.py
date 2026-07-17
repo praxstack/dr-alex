@@ -1,27 +1,30 @@
-"""Claude integration — calls the `claude` CLI via subprocess.
+"""Claude integration — the SINGLE model entrypoint (council Directive 1).
 
-Phase 1 keeps this deliberately thin and defensive:
-- the persona (`persona/dr-alex.md`) is the system prompt;
-- the continuity brief is passed as background context;
-- a ``<SAFETY_STATE tier=...>`` line is always included so the model knows the
-  deterministic triage verdict for the turn;
-- conversation history is rendered into the prompt (print mode is stateless).
+Exactly one function, :func:`complete`, invokes the ``claude`` CLI. Its signature
+*requires* a :class:`~safety.triage.TriageResult`, so a model reply structurally cannot
+be requested without a deterministic triage verdict, and a RED verdict must short-circuit
+*before* this module is ever reached. ``generate`` and ``stream`` are thin
+backwards-compatible adapters that route through :func:`complete`; nothing else spawns
+the model. A grep/AST test (``tests/test_single_llm_entrypoint.py``) enforces this.
 
-It NEVER raises on the user: a missing `claude` binary, a non-zero exit, a timeout,
-or empty output all resolve to a calm fallback message. RED turns never reach here —
-that short-circuit lives in the app, before this module is called.
+Phase-2 note: the deterministic output gates (citation validation, anti-dependency lint)
+run on the *complete* reply before it reaches Prax, so there is no incremental
+token streaming to the screen — the model is called once per turn and its full text is
+gated, then shown. ``stream`` therefore yields the whole reply as a single chunk.
+
+It NEVER raises on the user: a missing ``claude`` binary, a non-zero exit, a timeout, or
+empty output all resolve to a calm fallback message.
 """
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import subprocess
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from safety.triage import Tier
+from safety.triage import Tier, TriageResult
 
 CLAUDE_BIN_ENV = "DR_ALEX_CLAUDE_BIN"
 MODEL_ENV = "DR_ALEX_MODEL"
@@ -95,17 +98,30 @@ def _render_history(messages: list[Message]) -> str:
     return "\n".join(lines)
 
 
-def build_prompt(messages: list[Message], tier: Tier) -> str:
-    """The -p prompt: a SAFETY_STATE line + the conversation so far."""
-    safety_note = ""
-    if tier is Tier.AMBER:
-        safety_note = "\n" + _AMBER_GROUNDING_NOTE
+def build_prompt(
+    messages: list[Message],
+    tier: Tier,
+    *,
+    book_context: str | None = None,
+    corrective: str | None = None,
+) -> str:
+    """The -p prompt: SAFETY_STATE + optional BOOK_CONTEXT + the conversation so far.
+
+    ``book_context`` is the labeled ``<BOOK_CONTEXT cite="required">`` block (built by the
+    engine from this turn's retrieval). ``corrective`` is an extra instruction appended on
+    a regeneration (e.g. the anti-dependency lint's one retry).
+    """
+    safety_note = "\n" + _AMBER_GROUNDING_NOTE if tier is Tier.AMBER else ""
     header = f'<SAFETY_STATE tier="{tier.value}">{safety_note}\n</SAFETY_STATE>'
-    convo = _render_history(messages)
-    return (
-        f"{header}\n\n<CONVERSATION>\n{convo}\n</CONVERSATION>\n\n"
-        "Respond as Dr. Alex to Prax's most recent message. Warm, honest, brief."
-    )
+    parts = [header, ""]
+    if book_context:
+        parts.extend([book_context, ""])
+    parts.extend(["<CONVERSATION>", _render_history(messages), "</CONVERSATION>", ""])
+    instruction = "Respond as Dr. Alex to Prax's most recent message. Warm, honest, brief."
+    if corrective:
+        instruction += "\n\n" + corrective.strip()
+    parts.append(instruction)
+    return "\n".join(parts)
 
 
 def _base_cmd(system_prompt: str, output_format: str) -> list[str]:
@@ -120,7 +136,60 @@ def _base_cmd(system_prompt: str, output_format: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Non-streaming
+# THE single model entrypoint (Directive 1)
+# ---------------------------------------------------------------------------
+
+
+def complete(
+    triage: TriageResult,
+    messages: list[Message],
+    *,
+    system_prompt: str,
+    timeout: int = DEFAULT_TIMEOUT,
+    book_context: str | None = None,
+    corrective: str | None = None,
+) -> LLMResult:
+    """Invoke the model for one turn. The ONLY function that spawns ``claude``.
+
+    Requires a :class:`TriageResult`; a RED verdict is a programming error here (RED must
+    short-circuit in the engine, before retrieval and before this call). Never raises on
+    the user — every failure degrades to a calm fallback.
+    """
+    if triage.tier is Tier.RED:
+        raise ValueError("complete() must never run on a RED turn; RED short-circuits earlier")
+
+    if not claude_available():
+        return LLMResult(
+            ok=False, text=_CALM_FALLBACK, tier=triage.tier,
+            error="claude CLI not found on PATH", used_fallback=True,
+        )
+
+    prompt = build_prompt(messages, triage.tier, book_context=book_context, corrective=corrective)
+    cmd = _base_cmd(system_prompt, "text")
+    try:
+        proc = subprocess.run(
+            cmd, input=prompt, capture_output=True, text=True, timeout=timeout,
+        )
+    except FileNotFoundError as exc:
+        return LLMResult(ok=False, text=_CALM_FALLBACK, tier=triage.tier, error=str(exc), used_fallback=True)
+    except subprocess.TimeoutExpired:
+        return LLMResult(
+            ok=False, text=_CALM_FALLBACK, tier=triage.tier,
+            error=f"claude timed out after {timeout}s", used_fallback=True,
+        )
+    except OSError as exc:  # pragma: no cover - defensive
+        return LLMResult(ok=False, text=_CALM_FALLBACK, tier=triage.tier, error=str(exc), used_fallback=True)
+
+    out = (proc.stdout or "").strip()
+    if proc.returncode != 0 or not out:
+        err = (proc.stderr or "").strip() or f"claude exited {proc.returncode}"
+        return LLMResult(ok=False, text=_CALM_FALLBACK, tier=triage.tier, error=err, used_fallback=True)
+
+    return LLMResult(ok=True, text=out, tier=triage.tier)
+
+
+# ---------------------------------------------------------------------------
+# Backwards-compatible adapters — route through complete(), never spawn directly.
 # ---------------------------------------------------------------------------
 
 
@@ -130,58 +199,44 @@ def generate(
     *,
     system_prompt: str,
     timeout: int = DEFAULT_TIMEOUT,
+    book_context: str | None = None,
+    corrective: str | None = None,
 ) -> LLMResult:
-    """Full (non-streaming) response. Never raises; degrades to a calm fallback."""
-    if not claude_available():
-        return LLMResult(
-            ok=False,
-            text=_CALM_FALLBACK,
-            tier=tier,
-            error="claude CLI not found on PATH",
-            used_fallback=True,
-        )
-
-    prompt = build_prompt(messages, tier)
-    cmd = _base_cmd(system_prompt, "text")
-    try:
-        proc = subprocess.run(
-            cmd,
-            input=prompt,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except FileNotFoundError as exc:
-        return LLMResult(ok=False, text=_CALM_FALLBACK, tier=tier, error=str(exc), used_fallback=True)
-    except subprocess.TimeoutExpired:
-        return LLMResult(
-            ok=False,
-            text=_CALM_FALLBACK,
-            tier=tier,
-            error=f"claude timed out after {timeout}s",
-            used_fallback=True,
-        )
-    except OSError as exc:  # pragma: no cover - defensive
-        return LLMResult(ok=False, text=_CALM_FALLBACK, tier=tier, error=str(exc), used_fallback=True)
-
-    out = (proc.stdout or "").strip()
-    if proc.returncode != 0 or not out:
-        err = (proc.stderr or "").strip() or f"claude exited {proc.returncode}"
-        return LLMResult(ok=False, text=_CALM_FALLBACK, tier=tier, error=err, used_fallback=True)
-
-    return LLMResult(ok=True, text=out, tier=tier)
+    """Full (non-streaming) response. Thin adapter over the single entrypoint."""
+    return complete(
+        TriageResult(tier=tier), messages, system_prompt=system_prompt,
+        timeout=timeout, book_context=book_context, corrective=corrective,
+    )
 
 
-# ---------------------------------------------------------------------------
-# Streaming (best-effort; falls back to a single full chunk)
-# ---------------------------------------------------------------------------
+def stream(
+    messages: list[Message],
+    tier: Tier,
+    *,
+    system_prompt: str,
+    timeout: int = DEFAULT_TIMEOUT,
+    book_context: str | None = None,
+    corrective: str | None = None,
+) -> Iterator[str]:
+    """Yield the reply. Gates need the full text, so this is one chunk (see module doc).
+
+    Always yields at least once (a calm fallback if the model can't be reached), so
+    callers can render without special-casing.
+    """
+    yield complete(
+        TriageResult(tier=tier), messages, system_prompt=system_prompt,
+        timeout=timeout, book_context=book_context, corrective=corrective,
+    ).text
 
 
 def _extract_text(obj: object) -> str:
-    """Pull assistant text out of one stream-json object, best-effort."""
+    """Pull assistant text out of one stream-json object, best-effort.
+
+    Retained for the Phase-5 SSE surface (``alexd`` streams stream-json to the PWA); the
+    at-desk TUI path uses the non-streaming :func:`complete`.
+    """
     if not isinstance(obj, dict):
         return ""
-    # Final result event.
     if obj.get("type") == "result" and isinstance(obj.get("result"), str):
         return obj["result"]
     msg = obj.get("message")
@@ -195,83 +250,7 @@ def _extract_text(obj: object) -> str:
                 if isinstance(block, dict) and block.get("type") == "text":
                     chunks.append(block.get("text", ""))
             return "".join(chunks)
-    # Partial delta shapes.
     delta = obj.get("delta")
     if isinstance(delta, dict) and isinstance(delta.get("text"), str):
         return delta["text"]
     return ""
-
-
-def stream(
-    messages: list[Message],
-    tier: Tier,
-    *,
-    system_prompt: str,
-    timeout: int = DEFAULT_TIMEOUT,
-) -> Iterator[str]:
-    """Yield response text incrementally. Falls back to yielding the full text once.
-
-    Guarantees at least one yield (a calm fallback if everything fails), so callers can
-    render something without special-casing.
-    """
-    if not claude_available():
-        yield _CALM_FALLBACK
-        return
-
-    prompt = build_prompt(messages, tier)
-    cmd = _base_cmd(system_prompt, "stream-json") + ["--verbose"]
-
-    emitted = 0
-    got_any = False
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-    except (FileNotFoundError, OSError):
-        # Fall back to the non-streaming path.
-        result = generate(messages, tier, system_prompt=system_prompt, timeout=timeout)
-        yield result.text
-        return
-
-    try:
-        assert proc.stdin is not None and proc.stdout is not None
-        proc.stdin.write(prompt)
-        proc.stdin.close()
-        cumulative = ""
-        for line in proc.stdout:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            text = _extract_text(obj)
-            if not text:
-                continue
-            got_any = True
-            # Some shapes are cumulative, some are deltas. Handle both: if the new
-            # text starts with what we've seen, treat as cumulative; else append.
-            if text.startswith(cumulative) and len(text) >= len(cumulative):
-                new = text[len(cumulative):]
-                cumulative = text
-            else:
-                new = text
-                cumulative += text
-            if new:
-                emitted += len(new)
-                yield new
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-    except OSError:  # pragma: no cover - defensive
-        proc.kill()
-
-    if not got_any or emitted == 0:
-        # Streaming produced nothing usable — fall back to full response.
-        result = generate(messages, tier, system_prompt=system_prompt, timeout=timeout)
-        yield result.text
