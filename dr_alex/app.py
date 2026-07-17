@@ -167,6 +167,19 @@ class DrAlexApp(App[None]):
         content-align: left middle;
     }
 
+    #voice-indicator {
+        display: none;
+        height: 1;
+        padding: 0 3;
+        color: #2a2030;
+        background: #d98a8a;
+        text-style: bold;
+        content-align: left middle;
+    }
+    #voice-indicator.on {
+        display: block;
+    }
+
     #rail {
         dock: right;
         width: 28;
@@ -226,6 +239,7 @@ class DrAlexApp(App[None]):
     BINDINGS = [
         ("f1", "crisis", "Help"),
         ("f2", "homework", "Homework"),
+        ("f3", "voice", "Voice"),
         ("ctrl+c", "quit", "Quit"),
     ]
 
@@ -246,6 +260,10 @@ class DrAlexApp(App[None]):
         # Phase 4 mood: capture "arriving" first, then flip to "leaving" for the close chip.
         self._mood_phase = "open"
         self._test_traffic = telemetry.is_test_traffic()
+        # Phase 8 voice press-to-talk: explicit start/stop, visible indicator, no always-on.
+        self._recording = False
+        self._voice_recorder = None
+        self._voice_wav = None
 
     # -- layout -----------------------------------------------------------
 
@@ -262,8 +280,9 @@ class DrAlexApp(App[None]):
         yield VerticalScroll(id="chat")
         with Vertical(id="bottombar"):
             yield MoodBar(phase="open")
-            yield Static("Feeling unsafe? press F1 for help  ·  F2 for homework", id="helpbar", markup=True)
-            yield Input(placeholder="Type to talk to Alex…  (/help  ·  F1 for help)", id="prompt")
+            yield Static("", id="voice-indicator", markup=True)
+            yield Static("Feeling unsafe? press F1 for help  ·  F2 homework  ·  F3 voice", id="helpbar", markup=True)
+            yield Input(placeholder="Type to talk to Alex…  (/help  ·  F1 help  ·  F3 voice)", id="prompt")
 
     def on_mount(self) -> None:
         self.query_one("#prompt", Input).focus()
@@ -434,6 +453,73 @@ class DrAlexApp(App[None]):
         """F2 — the homework drawer (list open, mark done)."""
         if not isinstance(self.screen, HomeworkScreen):
             self.push_screen(HomeworkScreen())
+
+    def action_voice(self) -> None:
+        """F3 — press-to-talk (council D7). Explicit start/stop, visible indicator, no always-on.
+
+        First press opens the mic (only if a LOCAL transcriber exists); second press stops,
+        transcribes locally, and feeds the TEXT into the SAME triage-gated ``process_turn`` as
+        typed input (Directive 1). Cloud STT is never an option.
+        """
+        from dr_alex import voice
+
+        if not self._recording:
+            degraded = voice.available()
+            if degraded is not None:
+                self._add_message("note", f"[dim]{escape(degraded.hint or voice.install_hint())}[/dim]")
+                return
+            try:
+                self._voice_recorder = voice.FfmpegRecorder()
+                self._voice_wav = voice.begin_capture(self._voice_recorder)
+            except Exception:  # noqa: BLE001 — a mic failure degrades to text, never crashes
+                self._add_message("note", "[dim]Couldn't open the mic — just type instead.[/dim]")
+                self._voice_recorder = None
+                self._voice_wav = None
+                return
+            self._recording = True
+            self._set_voice_indicator("[b]● REC[/b]  listening — press F3 to stop")
+        else:
+            # Stop + transcribe off the UI thread (whisper can block); indicator → "transcribing".
+            self._recording = False
+            self._set_voice_indicator("[b]…[/b] transcribing")
+            self._finish_voice()
+
+    def _set_voice_indicator(self, markup_text: str | None) -> None:
+        try:
+            widget = self.query_one("#voice-indicator", Static)
+            if markup_text:
+                widget.update(markup_text)
+                widget.add_class("on")
+            else:
+                widget.remove_class("on")
+        except Exception:  # noqa: BLE001
+            pass
+
+    @work(thread=True, exclusive=True, group="voice")
+    def _finish_voice(self) -> None:
+        from dr_alex import voice
+
+        recorder, wav = self._voice_recorder, self._voice_wav
+        self._voice_recorder = None
+        self._voice_wav = None
+        text = ""
+        try:
+            if recorder is not None and wav is not None:
+                res = voice.finish_capture(recorder, wav)
+                text = res.text if not res.degraded else ""
+        except Exception:  # noqa: BLE001 — transcription must never crash the app
+            text = ""
+        self.call_from_thread(self._set_voice_indicator, None)
+        self.call_from_thread(self._deliver_voice_text, text)
+
+    def _deliver_voice_text(self, text: str) -> None:
+        text = (text or "").strip()
+        if not text:
+            self._add_message("note", "[dim]Didn't catch that — try again, or just type.[/dim]")
+            return
+        # Route EXACTLY like typed input: show it, then the single triage-gated turn.
+        self._add_message("user", escape(text))
+        self.process_turn(text)
 
     def on_mood_bar_picked(self, event: MoodBar.Picked) -> None:
         """Record a mood chip (open, then close) — always skippable, never blocking."""
