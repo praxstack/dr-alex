@@ -5,19 +5,16 @@
 
 "use strict";
 
-var CACHE = "the-room-shell-v1";
+var CACHE = "the-room-shell-v2";
 
-/* The app shell + the offline crisis surface. crisis.html and app.js both carry the hard-coded
- * India crisis resources (14416 … Shreya), so the crisis card is available with no network. */
-var PRECACHE = [
-  "/",
-  "/index.html",
-  "/app.css",
-  "/app.js",
-  "/crisis",
-  "/crisis.html",
-  "/manifest.json"
-];
+/* Split by criticality. The offline crisis surface — the "/" shell + the "/crisis" card — is the
+ * load-bearing safety property: it is cached ATOMICALLY and install FAILS LOUDLY if it can't be
+ * (contract invariant: loud failures). Everything else is best-effort — a single missing or
+ * renamed asset must NEVER again silently disable the whole offline shell. That regression shipped
+ * once: the precache listed "/index.html" and "/crisis.html", which the service 404s, so the
+ * atomic addAll rejected and no service worker ever activated. Only actually-served routes here. */
+var CRITICAL = ["/", "/crisis"];
+var OPTIONAL = ["/app.css", "/app.js", "/manifest.json"];
 
 /* Requests that must always hit the network (live data; never cached). */
 var API_PREFIXES = [
@@ -35,7 +32,15 @@ function isApi(path) {
 self.addEventListener("install", function (event) {
   event.waitUntil(
     caches.open(CACHE).then(function (cache) {
-      return cache.addAll(PRECACHE);
+      // Critical assets are atomic: if the crisis surface can't be cached, install rejects
+      // and this worker never activates — a loud failure, exactly as we want for the one
+      // property the whole design exists to protect.
+      return cache.addAll(CRITICAL).then(function () {
+        // Optional assets are best-effort: a single missing/renamed file must not abort install.
+        return Promise.all(OPTIONAL.map(function (u) {
+          return cache.add(u).catch(function () { return null; });
+        }));
+      });
     }).then(function () { return self.skipWaiting(); })
   );
 });
