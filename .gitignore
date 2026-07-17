@@ -30,3 +30,6 @@ state.db*
 *.mp3
 *.flac
 tmp/
+
+# Phase 2 (council D1): derived book index — rebuildable from the corpus, never committed
+data/index/
