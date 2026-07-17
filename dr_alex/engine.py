@@ -18,13 +18,16 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
+from dr_alex import captoken
 from dr_alex import config as _config
 from dr_alex import continuity as _continuity
 from dr_alex import gates
 from dr_alex import llm as _llm
 from dr_alex import memory as _memory
 from dr_alex import paths
+from dr_alex import statedb
 from dr_alex import statefile as _statefile
+from dr_alex import telemetry
 from dr_alex.session import SessionState
 from safety import crisis_card
 from safety import crisis_questioning
@@ -65,14 +68,16 @@ def system_prompt() -> str:
 
 
 def assemble_startup_memory(
-    *, now=None, recall_fn=_memory.memstore.recall, trend_fn=_memory.stub_trend
+    *, now=None, recall_fn=_memory.memstore.recall, trend_fn=None
 ) -> _memory.MemoryContext:
     """Assemble the once-per-session memory context (G20) from the persisted state file.
 
     Thin wrapper so callers (TUI, future alexd) import one place. ``recall_fn`` / ``trend_fn``
-    are the injectable seams (defaults shell out to gated memctl / stub the Phase-4 trend).
+    are the injectable seams. ``trend_fn`` defaults to the Phase-4 real ``state.db`` mood
+    trend when telemetry is on (else honest emptiness).
     """
     state = _statefile.load()
+    trend_fn = trend_fn or telemetry.trend_seam()
     return _memory.assemble(state, now=now, recall_fn=recall_fn, trend_fn=trend_fn)
 
 
@@ -153,7 +158,16 @@ def retrieve_context(text: str, *, k: int = DEFAULT_TOP_K, retriever=None):
 
     Returns ``(retrieved, book_context|None)``. Never raises — a broken/absent index
     degrades to no context rather than breaking the turn (honest emptiness).
+
+    **Capability gate (council D3).** book_search is inert without a valid safety-check
+    token held for the current turn; an ungated call is refused (logged) and returns no
+    context. The safe turn path mints the token right after triage.
     """
+    try:
+        captoken.require()
+    except captoken.CapabilityRefused:
+        _trace_log.warning("book_search refused: no capability token (safe path not taken)")
+        return [], None
     r = retriever or _get_retriever()
     try:
         retrieved = r.retrieve(text, k=k)
@@ -257,6 +271,47 @@ def safety_probe_note(session: SessionState | None, tier: Tier, user_text: str) 
     )
 
 
+def record_turn_telemetry(
+    *,
+    session_id: str | None,
+    tier: Tier,
+    user_text: str,
+    reply_text: str,
+    outcome: gates.GateOutcome | None,
+    safety_action: str,
+    now: datetime | None = None,
+) -> None:
+    """Persist the G9 turn trace + encrypted transcript, and flag an empty-reply malfunction.
+
+    Best-effort and body-free at the log layer: the trace row carries only
+    ``model_version`` + ``prompt_hash`` + ``is_test_traffic`` and enum actions (G9/R3); the
+    transcript bodies are Fernet-encrypted before they touch disk (D2). Never raises.
+    """
+    try:
+        statedb.record_turn_trace(
+            session_id=session_id,
+            tier=tier.value,
+            model_version=telemetry.model_version(),
+            prompt_hash=telemetry.prompt_hash(system_prompt(), user_text),
+            is_test_traffic=telemetry.is_test_traffic(),
+            safety_action=safety_action,
+            dependency_action=outcome.dependency_action if outcome else "clean",
+            register_action=outcome.register_action if outcome else "clean",
+            now=now,
+        )
+        test_traffic = telemetry.is_test_traffic()
+        statedb.record_transcript(session_id=session_id, role="user", body=user_text,
+                                  tier=tier.value, is_test_traffic=test_traffic, now=now)
+        if reply_text:
+            statedb.record_transcript(session_id=session_id, role="assistant", body=reply_text,
+                                      tier=tier.value, is_test_traffic=test_traffic, now=now)
+        # G10: a visibly empty delivered reply is a malfunction — queue one ack for next start.
+        if not reply_text or not reply_text.strip() or reply_text.strip() == "(no response)":
+            telemetry.note_malfunction("empty_reply", session_id=session_id, now=now)
+    except Exception:  # noqa: BLE001 — telemetry must never break a turn
+        pass
+
+
 def respond_oneshot(
     user_text: str,
     *,
@@ -266,6 +321,7 @@ def respond_oneshot(
     timeout: int = _llm.DEFAULT_TIMEOUT,
     retriever=None,
     session: SessionState | None = None,
+    session_id: str | None = None,
 ) -> tuple[Tier, str]:
     """Run one full safety-first turn without the TUI. Returns (tier, reply_text).
 
@@ -284,10 +340,14 @@ def respond_oneshot(
         session.recent_risk = tier
     if tier is Tier.RED:
         # short-circuit before retrieval + model. red_response_text grades the register
-        # (full by default; passive-only warmer variant when graded is enabled).
+        # (full by default; passive-only warmer variant when graded is enabled). No
+        # capability token is minted on the RED path (retrieval/recall stay unreachable).
         return tier, red_response_text(user_text)
 
-    retrieved, book_ctx = retrieve_context(user_text, retriever=retriever)  # STEP 1 + 2
+    # STEP 0 passed (safety_check) → mint the short-lived capability token that book_search
+    # (and any gated recall) require. RED never reaches here (council D3).
+    with captoken.granted():
+        retrieved, book_ctx = retrieve_context(user_text, retriever=retriever)  # STEP 1 + 2
 
     messages = list(history or [])
     messages.append(_llm.Message(role="user", content=user_text))
@@ -328,4 +388,8 @@ def respond_oneshot(
             safety_action = "probe-asked"
 
     trace_turn(tier, retrieved, outcome, safety_action)  # STEP 5
+    record_turn_telemetry(
+        session_id=session_id, tier=tier, user_text=user_text, reply_text=outcome.text,
+        outcome=outcome, safety_action=safety_action, now=now,
+    )
     return tier, outcome.text

@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from dr_alex import memstore
+from dr_alex import captoken, memstore
 from dr_alex.memstore import _Proc
 
 
@@ -17,6 +17,14 @@ from dr_alex.memstore import _Proc
 def _memory_on(monkeypatch: pytest.MonkeyPatch) -> None:
     # These tests exercise the wired path; re-enable memory (suite default is OFF).
     monkeypatch.setenv("DR_ALEX_MEMORY_OFF", "0")
+
+
+@pytest.fixture(autouse=True)
+def _capability_granted():
+    # Gated recall now requires a safety-check capability token (council D3). Every recall in
+    # this module exercises the authorized bridge, so hold a grant for the whole module.
+    with captoken.granted():
+        yield
 
 
 def _capture(monkeypatch, proc: _Proc):

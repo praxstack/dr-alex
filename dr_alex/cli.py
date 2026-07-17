@@ -7,6 +7,8 @@ Modes
     dr-alex "some text"   one-shot: a single safety-first exchange, printed and done
     dr-alex books ingest  (re)build the book index from the corpus
     dr-alex books status  show the corpus manifest + index state
+    dr-alex backup        G19 durability: git bundle + encrypted state.db snapshot
+    dr-alex eval --once   G13 nightly eval (relative drift); normally run by the (disabled) cron
     dr-alex --card        print the crisis card (pure, no LLM) and exit
     dr-alex --version
 """
@@ -16,6 +18,41 @@ from __future__ import annotations
 import sys
 
 from dr_alex import __version__
+
+
+def _backup_command() -> int:
+    """`dr-alex backup` — G19 durability. Silent on success; prints only on failure."""
+    from dr_alex import backup
+
+    res = backup.run_backup()
+    if res.ok:
+        return 0  # silent-on-success (council + graft-pack G19)
+    for err in res.errors or ["backup failed"]:
+        print(f"backup error: {err}", file=sys.stderr)
+    return 1
+
+
+def _eval_command(args: list[str]) -> int:
+    """`dr-alex eval --once` — run the G13 eval now (the launchd cron ships DISABLED)."""
+    from dr_alex import eval_cron
+
+    if "--once" not in args and args:
+        print(f"Unknown eval args: {args}. Use: dr-alex eval --once", file=sys.stderr)
+        return 2
+    res = eval_cron.run_eval()
+    if not res.ran:
+        print("eval skipped (telemetry disabled).")
+        return 0
+    print(f"eval: scored {len(res.scored)} session(s).")
+    for s in res.scored:
+        print(f"  {s.session_id}: score={s.score:.1f}"
+              + (f" z={s.z:.1f}" if s.z is not None else "")
+              + (" [DRIFT]" if s.drift_flagged else ""))
+    for alarm in res.drift_alarms:
+        print(f"  drift: {alarm}", file=sys.stderr)
+    if res.liveness_banner:
+        print(f"  liveness: {res.liveness_banner}", file=sys.stderr)
+    return 0
 
 
 def _books_command(args: list[str]) -> int:
@@ -88,6 +125,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args and args[0] == "books":
         return _books_command(args[1:])
+
+    if args and args[0] == "backup":
+        return _backup_command()
+
+    if args and args[0] == "eval":
+        return _eval_command(args[1:])
 
     if not args:
         from dr_alex import app

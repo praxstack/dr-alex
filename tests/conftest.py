@@ -9,12 +9,48 @@ throwaway store (see ``test_memctl_recall_smoke`` / ``test_memory_integration``)
 
 from __future__ import annotations
 
+import keyring
+import keyring.backend
 import pytest
 
 
+class _InMemoryKeyring(keyring.backend.KeyringBackend):
+    """A process-local keyring backend for tests.
+
+    Phase 4 stores the state.db Fernet key and the capability-token HMAC key in the macOS
+    Keychain. Hitting the real Keychain from the test suite can hang or prompt (especially
+    headless), so we install this deterministic in-memory backend for the whole session.
+    Encryption/capability round-trips are exercised for real; only the Keychain is faked.
+    At RUNTIME the real ``keyring.backends.macOS.Keyring`` backend is used.
+    """
+
+    priority = 1  # any positive value; we set it explicitly as the active backend
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._store: dict[tuple[str, str], str] = {}
+
+    def get_password(self, service: str, username: str) -> str | None:
+        return self._store.get((service, username))
+
+    def set_password(self, service: str, username: str, password: str) -> None:
+        self._store[(service, username)] = password
+
+    def delete_password(self, service: str, username: str) -> None:
+        self._store.pop((service, username), None)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _fake_keyring() -> None:
+    # Install the in-memory backend before any secret is loaded; keep it for the session.
+    keyring.set_keyring(_InMemoryKeyring())
+
+
 @pytest.fixture(autouse=True)
-def _memory_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+def _memory_off_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     # Belt-and-suspenders: the whole suite runs as if the store were unwired unless a test
     # deliberately turns memory on. This prevents the TUI's session-start recall and
     # session-end fan-out from ever spawning memctl / claude against the LIVE store.
     monkeypatch.setenv("DR_ALEX_MEMORY_OFF", "1")
+    # Phase 4: every test's state.db lives in a throwaway file, never the real data/state.db.
+    monkeypatch.setenv("DR_ALEX_STATE_DB", str(tmp_path / "state.db"))

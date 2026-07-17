@@ -76,6 +76,18 @@ def begin(
         turns, session_id=session_id, started_at=started_at,
         risk_tier_max=risk_tier_max, now=now,
     )
+    # Phase-4 seam: the user's own mood chips are ground truth — prefer them over the
+    # model's inferred mood_in/mood_out when they were recorded this session.
+    try:
+        from dr_alex import statedb
+
+        open_mood, close_mood = statedb.session_moods(session_id)
+        if open_mood is not None:
+            digest.mood_in = open_mood
+        if close_mood is not None:
+            digest.mood_out = close_mood
+    except Exception:  # noqa: BLE001 — the mood seam is best-effort
+        pass
     marker = UnfinalizedMarker(
         session_id=session_id,
         started_at=started_at,

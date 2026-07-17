@@ -24,9 +24,14 @@ therapy fact — structured status only (R3).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 from dataclasses import dataclass
+
+from dr_alex import captoken
+
+_log = logging.getLogger("dr_alex.memstore")
 
 # ---------------------------------------------------------------------------
 # Identity + configuration (env-overridable so tests point at a throwaway store)
@@ -157,7 +162,16 @@ def recall(
     keeps superseded / invalidated facts out of the assembled context. The high ceiling is
     authorized by the ``dr-alex`` launch identity; for any other identity memctl hard-fails
     (which we, correctly, surface as empty rather than falling back to a wider scope).
+
+    **Capability gate (council D3).** Gated recall is inert without a valid safety-check
+    capability token held for the current turn: an ungated call is refused loudly (logged)
+    and returns nothing, so the safe path (which mints the token) is the only useful one.
     """
+    try:
+        captoken.require()
+    except captoken.CapabilityRefused:
+        _log.warning("gated recall refused: no capability token (safe path not taken)")
+        return []
     if not memory_enabled():
         return []
     argv = [

@@ -61,13 +61,18 @@ def _spawning_functions() -> list[tuple[str, str]]:
     return found
 
 
-# The sanctioned subprocess sites. Exactly two functions may spawn a process:
-#   - dr_alex/llm.py::complete       — THE model entrypoint (spawns `claude`).
-#   - dr_alex/memstore.py::_run      — the memctl memory bridge (spawns `memctl` / its
-#                                      scrub; NEVER the model). Added in Phase 3.
+# The sanctioned subprocess sites. Exactly these functions may spawn a process:
+#   - dr_alex/llm.py::complete            — THE model entrypoint (spawns `claude`).
+#   - dr_alex/memstore.py::_run           — the memctl memory bridge (spawns `memctl` / its
+#                                           scrub; NEVER the model). Added in Phase 3.
+#   - dr_alex/filevault.py::_run_fdesetup — Phase 4: `fdesetup status` (FileVault check).
+#   - dr_alex/backup.py::_run_git         — Phase 4: read-only `git` for G19 durability
+#                                           bundles (NEVER add/commit/push, NEVER the model).
 _SANCTIONED_SPAWNS = {
     ("dr_alex/llm.py", "complete"),
     ("dr_alex/memstore.py", "_run"),
+    ("dr_alex/filevault.py", "_run_fdesetup"),
+    ("dr_alex/backup.py", "_run_git"),
 }
 
 
