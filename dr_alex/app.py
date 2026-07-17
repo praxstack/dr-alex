@@ -277,6 +277,9 @@ class DrAlexApp(App[None]):
         self._add_message("alex", opener)
         # G8: a loud staleness banner from cheap state (no subprocess), shown immediately.
         self._show_staleness_banner()
+        # D5: if a nightly check-in nudged while the app was closed, show the FIXED next-open
+        # banner once, then clear the flag. (No therapy data — the banner is a literal string.)
+        self._show_checkin_banner()
         # Phase 4 session start (cheap, local sqlite): record the session, replay the
         # one-time repair-ack, read back open homework, surface any late-night clustering,
         # and paint the right rail. All best-effort — telemetry never breaks a session start.
@@ -339,6 +342,16 @@ class DrAlexApp(App[None]):
             widget.update(f"⚠ {escape(text)}")
             widget.add_class("on")
         except Exception:  # noqa: BLE001
+            pass
+
+    def _show_checkin_banner(self) -> None:
+        try:
+            from dr_alex import checkin
+            banner = checkin.pending_banner()
+            if banner:
+                self._add_message("note", f"[b]note:[/b] {escape(banner)}")
+                checkin.clear_pending()
+        except Exception:  # noqa: BLE001 — the banner must never break startup
             pass
 
     def _show_staleness_banner(self) -> None:

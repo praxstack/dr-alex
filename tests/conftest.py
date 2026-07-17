@@ -62,6 +62,8 @@ def _memory_off_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setenv("DR_ALEX_RECORDS_DIR", str(tmp_path / "records"))
     monkeypatch.setenv("DR_ALEX_ACTIVE_FILE", str(tmp_path / "records" / "Active-File.md"))
     monkeypatch.setenv("DR_ALEX_EXPORTS_DIR", str(tmp_path / "exports"))
+    # Phase 7: the nightly check-in's pending-flag file lives in a throwaway path.
+    monkeypatch.setenv("DR_ALEX_CHECKIN_STATE", str(tmp_path / "checkin.json"))
     # Phase 6: the Notion mirror is OFF by default in the suite (belt-and-suspenders) so no
     # test can ever reach the real Notion API. Tests that exercise the mirror opt back in and
     # inject an httpx.MockTransport client.

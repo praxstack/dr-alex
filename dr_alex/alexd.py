@@ -412,16 +412,38 @@ def create_app() -> FastAPI:
         text = _continuity.load_continuity_text()
         return JSONResponse({"continuity": text, "greeting": engine.greeting()})
 
-    # -- gated: export/review (Phase 7 stub) ------------------------------
+    # -- gated: export/review (Phase 7 — real) ----------------------------
 
     @app.post("/export/review", dependencies=[Depends(require_device)])
     async def export_review(request: Request) -> JSONResponse:
+        """Generate a date-ranged export ON THE MAC for print-to-PDF (council D6).
+
+        Body: ``{from, to, redaction}``. With no range, defaults to the last 30 days. The
+        generated markdown + self-contained HTML are written locally to ``exports/``; only the
+        (date-only) file paths + range are returned — clinical content never crosses the wire.
+        """
+        from dr_alex import export as _export
+
         payload = await _json(request)
+        redaction = str(payload.get("redaction", "summary"))
+        frm = payload.get("from")
+        to = payload.get("to")
+
+        def _run() -> _export.ExportResult:
+            if frm and to:
+                return _export.export_range(str(frm), str(to), redaction=redaction, write=True)
+            return _export.review(days=30, redaction=redaction, write=True)
+
+        res = await run_in_threadpool(_run)
+        if not res.ok:
+            return JSONResponse({"ok": False, "error": res.error or "export failed"}, status_code=400)
         return JSONResponse({
-            "ok": False,
-            "status": "stub",
-            "message": "Prep-for-Shreya export lands in a later phase. Nothing was generated.",
-            "range": {"from": payload.get("from"), "to": payload.get("to")},
+            "ok": True,
+            "redaction": res.redaction,
+            "range": {"from": res.from_date, "to": res.to_date},
+            "markdown_path": res.markdown_path,
+            "html_path": res.html_path,
+            "note": "Generated on the Mac. Open the HTML and print-to-PDF; nothing was sent.",
         })
 
     # -- gated: WebAuthn registration stub (D3 rider 3) -------------------

@@ -211,11 +211,19 @@ def test_turn_fragment_is_buffered_then_coalesced(client, monkeypatch) -> None:
     assert seen["text"] == "I keep\ncircling the same worry"
 
 
-def test_export_review_is_a_graceful_stub(client) -> None:
+def test_export_review_generates_a_real_export(client) -> None:
     token = _pair(client)
-    r = client.post("/export/review", json={"from": "2026-07-01", "to": "2026-07-18"}, headers=_auth(token))
+    r = client.post("/export/review", json={"from": "2026-07-01", "to": "2026-07-18"},
+                    headers=_auth(token))
     assert r.status_code == 200
-    assert r.json()["status"] == "stub"
+    body = r.json()
+    assert body["ok"] is True
+    assert body["range"] == {"from": "2026-07-01", "to": "2026-07-18"}
+    # Real files were written locally; only date-only paths cross the wire (no clinical content).
+    assert body["markdown_path"] and body["markdown_path"].endswith(".md")
+    assert body["html_path"] and body["html_path"].endswith(".html")
+    import os
+    assert os.path.exists(body["html_path"])
 
 
 def test_run_turn_outcome_carries_structural_provenance(monkeypatch) -> None:
