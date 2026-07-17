@@ -57,3 +57,12 @@ def _memory_off_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     # Phase 5: every test's device-pairing db is a throwaway file, never the real
     # data/pairing.db (auth data must never leak into the source tree during a test run).
     monkeypatch.setenv("DR_ALEX_PAIRING_DB", str(tmp_path / "pairing.db"))
+    # Phase 6/7: the canonical Active File, records dir, and exports dir all point at throwaway
+    # paths so no test ever writes clinical content into the repo's records/ or exports/.
+    monkeypatch.setenv("DR_ALEX_RECORDS_DIR", str(tmp_path / "records"))
+    monkeypatch.setenv("DR_ALEX_ACTIVE_FILE", str(tmp_path / "records" / "Active-File.md"))
+    monkeypatch.setenv("DR_ALEX_EXPORTS_DIR", str(tmp_path / "exports"))
+    # Phase 6: the Notion mirror is OFF by default in the suite (belt-and-suspenders) so no
+    # test can ever reach the real Notion API. Tests that exercise the mirror opt back in and
+    # inject an httpx.MockTransport client.
+    monkeypatch.setenv("DR_ALEX_NOTION_OFF", "1")

@@ -11,6 +11,9 @@ dependencies = [
     "cryptography>=49.0.0",
     "fastapi>=0.139.2",
     "uvicorn>=0.51.0",
+    # Phase 6: the thin typed Notion mirror client (a real httpx client, NOT an MCP server —
+    # council D2/D4: smaller attack surface). Also underpins the FastAPI TestClient.
+    "httpx>=0.28.1",
 ]
 
 [project.scripts]

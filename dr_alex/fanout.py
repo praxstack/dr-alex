@@ -47,6 +47,9 @@ class FanoutResult:
     risk_tier_max: str
     durable_withheld: bool  # True on RED (conservative)
     scrub_failed: bool = False
+    # Phase 6 — canonical record (local truth) + Notion mirror.
+    active_file_path: str | None = None
+    notion_op: str | None = None  # "create" | "patch" | None (disabled / failed)
 
 
 def should_finalize(user_turns: int, *, explicit_close: bool) -> bool:
@@ -116,6 +119,7 @@ def complete(
     inbox_dir_fn=memstore.inbox_dir,
     continuity_fn=_digest.regenerate_continuity,
     save_continuity_fn=_continuity.save_continuity_text,
+    mirror_fn=None,
     state_path: Path | None = None,
 ) -> FanoutResult:
     """Complete (or resume) the fan-out for one session. Every step is idempotent."""
@@ -128,6 +132,10 @@ def complete(
     _regenerate_continuity(marker, digest, now, continuity_fn, save_continuity_fn, state_path)
     _finalize_state(marker, digest, state_path)
 
+    # Phase 6 — canonical local record FIRST (local truth), THEN the Notion mirror. Both are
+    # idempotent (session_id-keyed) and strictly best-effort: neither may break session end.
+    active_path, notion_op = _mirror_canonical(digest, mirror_fn=mirror_fn)
+
     return FanoutResult(
         session_id=marker.session_id,
         remembered=written_ids,
@@ -136,6 +144,8 @@ def complete(
         risk_tier_max=digest.risk_tier_max,
         durable_withheld=is_red,
         scrub_failed=scrub_failed,
+        active_file_path=active_path,
+        notion_op=notion_op,
     )
 
 
@@ -188,6 +198,37 @@ def _regenerate_continuity(marker, digest, now, continuity_fn, save_continuity_f
     save_continuity_fn(continuity_fn(digest, prior, now=now))
     marker.continuity_written = True
     statefile.set_unfinalized(marker, state_path)
+
+
+def _default_mirror(digest: SessionDigest) -> tuple[str | None, str | None]:
+    """Write the canonical Active File (local truth), then mirror to Notion (graceful-disabled).
+
+    Local FIRST: the human-readable record never depends on a network round-trip (council D4).
+    The Notion mirror is idempotent and disabled until Prax provisions a Keychain token.
+    """
+    from dr_alex import notion, records
+
+    active_path: str | None = None
+    notion_op: str | None = None
+    try:
+        p = records.update_from_digest(digest)
+        active_path = str(p)
+    except Exception:  # noqa: BLE001 — the canonical record must never break session end
+        active_path = None
+    try:
+        res = notion.mirror_session(digest, tier=digest.risk_tier_max)
+        notion_op = res.op if res.ok else None
+    except Exception:  # noqa: BLE001 — the mirror must never break session end
+        notion_op = None
+    return active_path, notion_op
+
+
+def _mirror_canonical(digest: SessionDigest, *, mirror_fn=None) -> tuple[str | None, str | None]:
+    fn = mirror_fn or _default_mirror
+    try:
+        return fn(digest)
+    except Exception:  # noqa: BLE001 — belt-and-suspenders; never propagate from the mirror step
+        return None, None
 
 
 def _finalize_state(marker, digest, state_path) -> None:

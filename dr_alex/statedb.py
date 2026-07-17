@@ -153,6 +153,13 @@ CREATE TABLE IF NOT EXISTS notes (
     kind        TEXT NOT NULL,
     body_enc    BLOB NOT NULL
 );
+CREATE TABLE IF NOT EXISTS notion_pages (
+    session_id  TEXT NOT NULL,
+    db_kind     TEXT NOT NULL,
+    page_id     TEXT NOT NULL,
+    updated_ts  TEXT NOT NULL,
+    PRIMARY KEY (session_id, db_kind)
+);
 """
 
 
@@ -757,3 +764,184 @@ def last_eval_at(*, path: Path | None = None) -> str | None:
     except sqlite3.Error:
         return None
     return row[0] if row else None
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 — Notion page idempotency map (session_id + db_kind → page_id).
+#
+# The stable ULID session_id is the idempotency key: the mirror stores the page_id Notion
+# returns so a re-run PATCHes the SAME page instead of creating a duplicate. Page ids are
+# opaque Notion identifiers (not free text / not clinical content) so they sit in the clear.
+# ---------------------------------------------------------------------------
+
+NOTION_DB_KINDS = ("sessions", "homework")
+
+
+def get_notion_page_id(session_id: str, db_kind: str, *, path: Path | None = None) -> str | None:
+    if not telemetry_enabled():
+        return None
+    try:
+        with _connect(path) as conn:
+            row = conn.execute(
+                "SELECT page_id FROM notion_pages WHERE session_id=? AND db_kind=?",
+                (session_id, db_kind),
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    return row[0] if row else None
+
+
+def set_notion_page_id(
+    session_id: str, db_kind: str, page_id: str, *, now: _dt.datetime | None = None,
+    path: Path | None = None,
+) -> None:
+    if not telemetry_enabled():
+        return
+    try:
+        with _connect(path) as conn:
+            conn.execute(
+                "INSERT INTO notion_pages (session_id, db_kind, page_id, updated_ts) "
+                "VALUES (?,?,?,?) "
+                "ON CONFLICT(session_id, db_kind) DO UPDATE SET page_id=excluded.page_id, "
+                "updated_ts=excluded.updated_ts",
+                (session_id, db_kind, page_id, _now_iso(now)),
+            )
+    except sqlite3.Error as exc:
+        _log.warning("set_notion_page_id failed: %s", type(exc).__name__)
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 — window snapshot (the G11 Shreya-prep packet reads ONLY this).
+#
+# Everything here is derived from the ALREADY-STORED telemetry; the pattern corpus is
+# decrypted IN MEMORY (R3: bodies never leave this process) and used only for deterministic
+# named-pattern matching inside the local packet.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class WindowSession:
+    id: str
+    started_ts: str
+    date_ist: str
+    hour_ist: int
+    is_test_traffic: bool
+    open_mood: int | None = None
+    close_mood: int | None = None
+
+
+@dataclass
+class WindowSnapshot:
+    from_ts: str
+    to_ts: str
+    window_days: int
+    sessions: list[WindowSession] = field(default_factory=list)
+    homework: list[Homework] = field(default_factory=list)
+    # turn-trace counts (G9 test-traffic caution lives on these)
+    turns_total: int = 0
+    turns_test_traffic: int = 0
+    turns_flagged: int = 0
+    tier_counts: dict[str, int] = field(default_factory=dict)
+    risk_tier_max: str | None = None
+    late_night: "DependencySignal | None" = None
+    #: decrypted free text from the window (user turns + homework + notes) — pattern matching
+    #: only; NEVER serialized into the packet verbatim.
+    pattern_corpus: list[str] = field(default_factory=list)
+
+    @property
+    def real_sessions(self) -> list[WindowSession]:
+        return [s for s in self.sessions if not s.is_test_traffic]
+
+
+def window_snapshot(
+    *,
+    now: _dt.datetime | None = None,
+    window_days: int = 7,
+    path: Path | None = None,
+) -> WindowSnapshot:
+    """Assemble the structured window the Shreya-prep packet reads. Degrades to empty."""
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    from_ts = _now_iso(now - _dt.timedelta(days=window_days))
+    to_ts = _now_iso(now)
+    snap = WindowSnapshot(from_ts=from_ts, to_ts=to_ts, window_days=window_days)
+    if not telemetry_enabled():
+        return snap
+
+    try:
+        with _connect(path) as conn:
+            sess_rows = conn.execute(
+                "SELECT id, started_ts, started_date_ist, started_hour_ist, is_test_traffic "
+                "FROM sessions WHERE started_ts >= ? ORDER BY started_ts",
+                (from_ts,),
+            ).fetchall()
+            for sid, started, date_ist, hour_ist, is_test in sess_rows:
+                open_mood, close_mood = _session_moods_conn(conn, sid)
+                snap.sessions.append(WindowSession(
+                    id=sid, started_ts=started, date_ist=date_ist, hour_ist=hour_ist,
+                    is_test_traffic=bool(is_test), open_mood=open_mood, close_mood=close_mood,
+                ))
+
+            hw_rows = conn.execute(
+                "SELECT id, title_enc, assigned_date, due, source_session, status, created_ts "
+                "FROM homework WHERE created_ts >= ? ORDER BY created_ts",
+                (from_ts,),
+            ).fetchall()
+            snap.homework = _rows_to_homework(hw_rows)
+
+            trace_rows = conn.execute(
+                "SELECT tier, is_test_traffic, safety_action, dependency_action, register_action "
+                "FROM turn_traces WHERE ts >= ?",
+                (from_ts,),
+            ).fetchall()
+            for tier, is_test, safety, dep, reg in trace_rows:
+                snap.turns_total += 1
+                if is_test:
+                    snap.turns_test_traffic += 1
+                snap.tier_counts[tier] = snap.tier_counts.get(tier, 0) + 1
+                if (safety not in (None, "none")) or (dep not in (None, "clean")) \
+                        or (reg not in (None, "clean")):
+                    snap.turns_flagged += 1
+
+            corpus: list[str] = []
+            for (body_enc,) in conn.execute(
+                "SELECT body_enc FROM transcripts WHERE ts >= ? AND role='user'", (from_ts,)
+            ).fetchall():
+                try:
+                    text = crypto.decrypt(body_enc)
+                except crypto.CryptoError:
+                    continue
+                if text:
+                    corpus.append(text)
+            for (body_enc,) in conn.execute(
+                "SELECT body_enc FROM notes WHERE ts >= ?", (from_ts,)
+            ).fetchall():
+                try:
+                    text = crypto.decrypt(body_enc)
+                except crypto.CryptoError:
+                    continue
+                if text:
+                    corpus.append(text)
+            corpus += [h.title for h in snap.homework if h.title]
+            snap.pattern_corpus = corpus
+    except sqlite3.Error as exc:
+        _log.warning("window_snapshot failed: %s", type(exc).__name__)
+        return snap
+
+    rank = {"GREEN": 0, "AMBER": 1, "RED": 2}
+    tiers = [t for t in snap.tier_counts if t in rank]
+    snap.risk_tier_max = max(tiers, key=lambda t: rank[t]) if tiers else None
+    snap.late_night = late_night_signal(now=now, window_days=window_days, path=path)
+    return snap
+
+
+def _session_moods_conn(conn: sqlite3.Connection, session_id: str) -> tuple[int | None, int | None]:
+    rows = conn.execute(
+        "SELECT phase, mood FROM mood_events WHERE session_id=? ORDER BY ts", (session_id,)
+    ).fetchall()
+    open_mood = close_mood = None
+    for phase, mood in rows:
+        if phase == "open":
+            open_mood = mood
+        elif phase == "close":
+            close_mood = mood
+    return (open_mood, close_mood)
