@@ -72,12 +72,19 @@ def _spawning_functions() -> list[tuple[str, str]]:
 #                                           notification with a FIXED, non-interpolated body
 #                                           (council D5). NEVER the model, never any therapy
 #                                           data; injectable so tests don't spawn it.
+#   - dr_alex/voice.py::_spawn_ffmpeg_capture — Phase 8: `ffmpeg` avfoundation mic capture
+#                                           (press-to-talk). LOCAL audio only; never the model.
+#   - dr_alex/voice.py::_run_whisper_cpp   — Phase 8: LOCAL whisper.cpp transcription (cloud STT
+#                                           is BANNED). Produces TEXT only; never the model, and
+#                                           the text re-enters the SAME triage-gated entrypoint.
 _SANCTIONED_SPAWNS = {
     ("dr_alex/llm.py", "complete"),
     ("dr_alex/memstore.py", "_run"),
     ("dr_alex/filevault.py", "_run_fdesetup"),
     ("dr_alex/backup.py", "_run_git"),
     ("dr_alex/checkin.py", "_default_runner"),
+    ("dr_alex/voice.py", "_spawn_ffmpeg_capture"),
+    ("dr_alex/voice.py", "_run_whisper_cpp"),
 }
 
 

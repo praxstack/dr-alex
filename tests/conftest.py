@@ -64,6 +64,11 @@ def _memory_off_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setenv("DR_ALEX_EXPORTS_DIR", str(tmp_path / "exports"))
     # Phase 7: the nightly check-in's pending-flag file lives in a throwaway path.
     monkeypatch.setenv("DR_ALEX_CHECKIN_STATE", str(tmp_path / "checkin.json"))
+    # Phase 8 voice: ephemeral audio goes to a throwaway tmp dir (NEVER the real ~/dr-alex/tmp),
+    # and voice is OFF by default so the suite can never spawn ffmpeg/whisper. Tests that
+    # exercise the happy path opt back in and inject a FAKE recorder + FAKE transcriber.
+    monkeypatch.setenv("DR_ALEX_AUDIO_TMP", str(tmp_path / "audio"))
+    monkeypatch.setenv("DR_ALEX_VOICE_OFF", "1")
     # Phase 6: the Notion mirror is OFF by default in the suite (belt-and-suspenders) so no
     # test can ever reach the real Notion API. Tests that exercise the mirror opt back in and
     # inject an httpx.MockTransport client.
