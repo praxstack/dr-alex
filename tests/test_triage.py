@@ -190,3 +190,26 @@ def test_red_beats_everything() -> None:
     # RED is never downgraded by recent_risk or time-of-day.
     day = datetime(2026, 7, 17, 14, 0)
     assert triage("I want to kill myself", recent_risk="GREEN", now=day) is Tier.RED
+
+
+# --- regression: "ending it all" euphemism (caught in independent safety review) ---
+# The -ing form of the SI euphemism must be RED (was a dangerous false-negative).
+import pytest as _pytest
+from safety.triage import triage as _triage, Tier as _Tier
+
+@_pytest.mark.parametrize("text", [
+    "thinking about ending it all",
+    "I just want to end it all",
+    "ending my life feels like the only option",
+    "ending things would be easier",
+])
+def test_ending_it_all_euphemism_is_red(text):
+    assert _triage(text) is _Tier.RED
+
+def test_would_never_end_it_all_denial_suppressed():
+    # a clear denial of the euphemism should NOT trip RED
+    assert _triage("I would never end it all, I promise") is not _Tier.RED
+
+def test_end_it_here_meeting_is_not_red():
+    # benign "end it here" (terminal, no SI object) must stay non-crisis
+    assert _triage("let's end it here, the meeting is over") is _Tier.GREEN

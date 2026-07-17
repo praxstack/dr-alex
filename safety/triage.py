@@ -105,7 +105,7 @@ _RED_ALWAYS = [
 _RED_CORE = [
     r"kill (?:myself|my self)",
     r"killing (?:myself|my self)",
-    r"end (?:my life|it all|things|it tonight)",
+    r"end(?:ing)?\s+(?:my life|it all|things|it tonight)",
     r"want (?:to|it all to|it to) (?:end|be over|stop)",
     r"just want it to (?:end|be over|stop)",
     r"(?:want|going|need|ready|about) to end (?:it|this|my life|myself)",
@@ -187,7 +187,7 @@ _DENIAL_RE = re.compile(
     r"\b(?:no|not|never|dont|don't|do not|wouldn't|wouldnt|would never|isn't|isnt|"
     r"aren't|arent|no longer|denies|deny|zero|without any)\b"
     r"[^.?!]{0,16}?\b(?:kill(?:ing)?\s+myself|hurt(?:ing)?\s+myself|harm(?:ing)?\s+myself|"
-    r"end(?:ing)?\s+(?:it|my\s+life|things)|die|dying|suicid\w*|self[\s-]?harm|"
+    r"end(?:ing)?\s+(?:it all|it|my\s+life|things)|die|dying|suicid\w*|self[\s-]?harm|"
     r"take\s+my\s+life|cut(?:ting)?\s+myself|off\s+myself)\b"
 )
 
