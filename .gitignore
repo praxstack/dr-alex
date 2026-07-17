@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# uv
+.venv/
+
+# OS
+.DS_Store
+
+# Dr. Alex — never commit conversation transcripts or any personal session data.
+# (Phase 1 keeps transcripts in-memory only; this is belt-and-suspenders for later phases.)
+*.transcript
+transcripts/
+state.db
+state.db-*
