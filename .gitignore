@@ -33,3 +33,6 @@ tmp/
 
 # Phase 2 (council D1): derived book index — rebuildable from the corpus, never committed
 data/index/
+
+# Session digests handed to the gardener — clinical content, never in git (Directive 3)
+inbox/
