@@ -61,11 +61,41 @@ def _spawning_functions() -> list[tuple[str, str]]:
     return found
 
 
-def test_exactly_one_function_spawns_the_model() -> None:
-    spawners = _spawning_functions()
-    assert spawners == [("dr_alex/llm.py", "complete")], (
-        f"model may only be invoked by dr_alex.llm.complete; found: {spawners}"
+# The sanctioned subprocess sites. Exactly two functions may spawn a process:
+#   - dr_alex/llm.py::complete       — THE model entrypoint (spawns `claude`).
+#   - dr_alex/memstore.py::_run      — the memctl memory bridge (spawns `memctl` / its
+#                                      scrub; NEVER the model). Added in Phase 3.
+_SANCTIONED_SPAWNS = {
+    ("dr_alex/llm.py", "complete"),
+    ("dr_alex/memstore.py", "_run"),
+}
+
+
+def test_only_sanctioned_functions_spawn_subprocesses() -> None:
+    spawners = set(_spawning_functions())
+    assert spawners == _SANCTIONED_SPAWNS, (
+        "only dr_alex.llm.complete (model) and dr_alex.memstore._run (memctl) may spawn a "
+        f"process; found: {sorted(spawners)}"
     )
+
+
+def test_only_llm_complete_can_spawn_the_model() -> None:
+    """The model machinery lives ONLY in dr_alex/llm.py; the memctl bridge never touches it.
+
+    This preserves Directive 1's real invariant now that a second (memory) spawn site
+    exists: the ``claude`` binary is resolved + invoked exclusively by ``dr_alex.llm``, and
+    ``dr_alex.memstore`` (the other spawn site) can only ever run ``memctl``.
+    """
+    memstore_src = (_ROOT / "dr_alex" / "memstore.py").read_text(encoding="utf-8").lower()
+    assert "claude" not in memstore_src, "the memctl bridge must never reference the model"
+    # The claude-specific flags + binary resolver live only in llm.py.
+    for pkg in _PKG_DIRS:
+        for path in (_ROOT / pkg).rglob("*.py"):
+            if path.name == "llm.py":
+                continue
+            src = path.read_text(encoding="utf-8")
+            assert "--append-system-prompt" not in src, f"model flags leaked into {path.name}"
+            assert "claude_bin" not in src, f"claude binary resolver referenced in {path.name}"
 
 
 def test_entrypoint_requires_a_triage_result() -> None:

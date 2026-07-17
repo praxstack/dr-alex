@@ -22,7 +22,9 @@ from dr_alex import config as _config
 from dr_alex import continuity as _continuity
 from dr_alex import gates
 from dr_alex import llm as _llm
+from dr_alex import memory as _memory
 from dr_alex import paths
+from dr_alex import statefile as _statefile
 from dr_alex.session import SessionState
 from safety import crisis_card
 from safety import crisis_questioning
@@ -60,6 +62,30 @@ def load_continuity() -> str | None:
 
 def system_prompt() -> str:
     return _llm.build_system_prompt(load_persona(), load_continuity())
+
+
+def assemble_startup_memory(
+    *, now=None, recall_fn=_memory.memstore.recall, trend_fn=_memory.stub_trend
+) -> _memory.MemoryContext:
+    """Assemble the once-per-session memory context (G20) from the persisted state file.
+
+    Thin wrapper so callers (TUI, future alexd) import one place. ``recall_fn`` / ``trend_fn``
+    are the injectable seams (defaults shell out to gated memctl / stub the Phase-4 trend).
+    """
+    state = _statefile.load()
+    return _memory.assemble(state, now=now, recall_fn=recall_fn, trend_fn=trend_fn)
+
+
+def system_prompt_with_memory(mem: _memory.MemoryContext | None) -> str:
+    """The system prompt with the immutable session-start memory context folded in (G20).
+
+    Built ONCE at session start and reused for every turn (byte-stable → prompt-cacheable).
+    Falls back to the base persona+continuity prompt when no memory context is available.
+    """
+    if mem is None:
+        return system_prompt()
+    base = _llm.build_system_prompt(load_persona(), mem.continuity_text)
+    return base + "\n\n---\n\n" + mem.to_system_suffix()
 
 
 def greeting() -> str:

@@ -31,6 +31,12 @@ state.db*
 *.flac
 tmp/
 
+# Phase 3: session-state JSON (last_session_at/last_topic + crash marker) — metadata, but
+# derived + private; never tracked (Directive 3).
+data/session_state.json
+data/*.json
+data/.session_state.*.tmp
+
 # Phase 2 (council D1): derived book index — rebuildable from the corpus, never committed
 data/index/
 
