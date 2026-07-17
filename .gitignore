@@ -19,3 +19,14 @@ dist/
 transcripts/
 state.db
 state.db-*
+
+# R1 (council 2026-07-17): clinical data never in git
+data/continuity.md
+records/
+exports/
+state.db*
+*.wav
+*.m4a
+*.mp3
+*.flac
+tmp/
