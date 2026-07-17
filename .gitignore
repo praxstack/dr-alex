@@ -34,6 +34,12 @@ tmp/
 # Phase 4 (G19): durability backups (git bundles + encrypted state.db snapshots) — local only
 data/backups/
 
+# Phase 5 (alexd): device-pairing store (hashed tokens, never in the clear) + the pidfile.
+# Auth data must never be tracked (Directive 3 / secrets discipline).
+data/pairing.db
+data/pairing.db-*
+data/alexd.pid
+
 # Phase 3: session-state JSON (last_session_at/last_topic + crash marker) — metadata, but
 # derived + private; never tracked (Directive 3).
 data/session_state.json

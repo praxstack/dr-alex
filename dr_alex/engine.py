@@ -16,6 +16,8 @@ The turn pipeline (council-vetted order):
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from dr_alex import captoken
@@ -312,7 +314,25 @@ def record_turn_telemetry(
         pass
 
 
-def respond_oneshot(
+@dataclass
+class TurnOutcome:
+    """The full result of one turn — everything the TUI, the one-shot CLI, and ``alexd``
+    (the Phase-5 SSE front door) need, produced by the SINGLE turn function :func:`run_turn`.
+
+    ``chunk_ids`` / ``memory_ids`` are structural provenance for the G16 wire-decision audit
+    line (never any body text, R3). ``memory_ids`` are the session-start recalled ids the
+    caller assembled once (G20); this per-turn function performs no fresh recall, so it only
+    echoes what it was handed.
+    """
+
+    tier: Tier
+    text: str
+    safety_action: str = "none"
+    chunk_ids: list[str] = field(default_factory=list)
+    memory_ids: list[str] = field(default_factory=list)
+
+
+def run_turn(
     user_text: str,
     *,
     history: list[_llm.Message] | None = None,
@@ -322,15 +342,19 @@ def respond_oneshot(
     retriever=None,
     session: SessionState | None = None,
     session_id: str | None = None,
-) -> tuple[Tier, str]:
-    """Run one full safety-first turn without the TUI. Returns (tier, reply_text).
+    system_prompt_override: str | None = None,
+    memory_ids: list[str] | None = None,
+) -> TurnOutcome:
+    """THE single safety-first turn, shared by the TUI, the one-shot CLI, and ``alexd``.
 
-    RED short-circuits: retrieval and the LLM are never reached. GREEN/AMBER retrieve
-    book context, call the model once, and run the deterministic output gates. When a
-    ``session`` is passed, the crisis-questioning discipline (G1) is enforced structurally:
-    once the one-time safety check-in has been offered, the AMBER prompt injects
-    "already asked — do not re-ask", and a deterministic backstop regenerates once if the
-    model asks anyway.
+    RED short-circuits: retrieval and the LLM are never reached — the crisis card is the
+    whole reply. GREEN/AMBER mint the capability token, retrieve book context, call the model
+    ONCE (via ``llm.generate`` → the single ``llm.complete`` entrypoint), and run the
+    deterministic output gates. The crisis-questioning discipline (G1) is enforced structurally
+    when a ``session`` is passed.
+
+    ``system_prompt_override`` lets ``alexd`` fold in the once-per-session memory context
+    (G20) without opening any new model call site. Returns a :class:`TurnOutcome`.
     """
     if session is not None and recent_risk is None:
         recent_risk = session.recent_risk
@@ -342,7 +366,7 @@ def respond_oneshot(
         # short-circuit before retrieval + model. red_response_text grades the register
         # (full by default; passive-only warmer variant when graded is enabled). No
         # capability token is minted on the RED path (retrieval/recall stay unreachable).
-        return tier, red_response_text(user_text)
+        return TurnOutcome(tier=tier, text=red_response_text(user_text), safety_action="red-card")
 
     # STEP 0 passed (safety_check) → mint the short-lived capability token that book_search
     # (and any gated recall) require. RED never reaches here (council D3).
@@ -351,7 +375,7 @@ def respond_oneshot(
 
     messages = list(history or [])
     messages.append(_llm.Message(role="user", content=user_text))
-    sp = system_prompt()
+    sp = system_prompt_override if system_prompt_override is not None else system_prompt()
 
     safety_note = safety_probe_note(session, tier, user_text)
 
@@ -392,4 +416,69 @@ def respond_oneshot(
         session_id=session_id, tier=tier, user_text=user_text, reply_text=outcome.text,
         outcome=outcome, safety_action=safety_action, now=now,
     )
-    return tier, outcome.text
+    return TurnOutcome(
+        tier=tier,
+        text=outcome.text,
+        safety_action=safety_action,
+        chunk_ids=[c.chunk_id for c in retrieved],
+        memory_ids=list(memory_ids or []),
+    )
+
+
+def respond_oneshot(
+    user_text: str,
+    *,
+    history: list[_llm.Message] | None = None,
+    recent_risk: object = None,
+    now: datetime | None = None,
+    timeout: int = _llm.DEFAULT_TIMEOUT,
+    retriever=None,
+    session: SessionState | None = None,
+    session_id: str | None = None,
+) -> tuple[Tier, str]:
+    """Thin wrapper over :func:`run_turn` — returns ``(tier, reply_text)``.
+
+    Preserved for the TUI/CLI callers and the existing test-suite; the whole pipeline lives
+    in :func:`run_turn` (one function, one model call site — Directive 1).
+    """
+    out = run_turn(
+        user_text, history=history, recent_risk=recent_risk, now=now, timeout=timeout,
+        retriever=retriever, session=session, session_id=session_id,
+    )
+    return out.tier, out.text
+
+
+# ---------------------------------------------------------------------------
+# Streaming helper for the alexd SSE surface (Phase 5).
+# ---------------------------------------------------------------------------
+#
+# The deterministic output gates need the WHOLE reply before it can be delivered (a
+# fabricated citation or dependency line is only detectable on the complete text), so the
+# model is still called exactly once and its full, gated reply is produced first — then
+# handed to the phone as a gentle token stream for a calm reading cadence. This is a
+# *rendering* convenience over the single-entrypoint pipeline, NOT a second model call.
+
+
+def chunk_text(text: str, *, size: int = 3) -> Iterator[str]:
+    """Yield a reply as small whitespace-preserving pieces for SSE token streaming.
+
+    Splits on whitespace, re-emitting the separators, so the phone re-assembles the exact
+    original text. ``size`` words per emitted chunk keeps the cadence calm without being
+    chatty on the wire.
+    """
+    if not text:
+        return
+    import re as _re
+
+    tokens = _re.split(r"(\s+)", text)  # keep the whitespace delimiters
+    buf: list[str] = []
+    words = 0
+    for tok in tokens:
+        buf.append(tok)
+        if tok and not tok.isspace():
+            words += 1
+        if words >= size:
+            yield "".join(buf)
+            buf, words = [], 0
+    if buf:
+        yield "".join(buf)

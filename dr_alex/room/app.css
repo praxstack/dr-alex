@@ -1,0 +1,346 @@
+/* The Room — one calm screen. Fully self-contained: system font stack only, no remote assets.
+   Theme-aware (prefers-color-scheme + a manual [data-theme] override), mobile-first. */
+
+:root {
+  color-scheme: light dark;
+  --bg: #f4f2ee;
+  --surface: #fbfaf7;
+  --surface-2: #efece5;
+  --text: #2f2b28;
+  --muted: #6b6560;
+  --accent: #7c6f9f;        /* soft lavender — Alex */
+  --accent-soft: #ece7f5;
+  --sage: #6fae9f;          /* you */
+  --sage-soft: #e4efe9;
+  --crisis: #b5623a;        /* warm terracotta — never neon red */
+  --crisis-soft: #f6e7dd;
+  --border: #e3ded5;
+  --shadow: 0 1px 2px rgba(40, 34, 28, 0.06), 0 6px 20px rgba(40, 34, 28, 0.06);
+  --radius: 14px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181f;
+    --surface: #1e2029;
+    --surface-2: #242734;
+    --text: #e7e4de;
+    --muted: #9a978f;
+    --accent: #b3a6df;
+    --accent-soft: #2a2740;
+    --sage: #86c2b3;
+    --sage-soft: #203029;
+    --crisis: #d9a86a;
+    --crisis-soft: #33271c;
+    --border: #2c2f3a;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 22px rgba(0, 0, 0, 0.28);
+  }
+}
+
+/* Manual override wins in both directions. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f2ee; --surface: #fbfaf7; --surface-2: #efece5; --text: #2f2b28;
+  --muted: #6b6560; --accent: #7c6f9f; --accent-soft: #ece7f5; --sage: #6fae9f;
+  --sage-soft: #e4efe9; --crisis: #b5623a; --crisis-soft: #f6e7dd; --border: #e3ded5;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #16181f; --surface: #1e2029; --surface-2: #242734; --text: #e7e4de;
+  --muted: #9a978f; --accent: #b3a6df; --accent-soft: #2a2740; --sage: #86c2b3;
+  --sage-soft: #203029; --crisis: #d9a86a; --crisis-soft: #33271c; --border: #2c2f3a;
+}
+
+* { box-sizing: border-box; }
+
+/* A class with a `display` value out-specifies the UA `[hidden] { display:none }` rule, so
+   toggling the `hidden` attribute alone wouldn't hide .pair/.room/.drawer/.crisis-overlay/etc.
+   Make `hidden` authoritative. */
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+button { font-family: inherit; cursor: pointer; }
+button:focus-visible, input:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- Top bar ---------------------------------------------------------- */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px calc(10px + env(safe-area-inset-top, 0px));
+  padding-top: max(10px, env(safe-area-inset-top, 0px));
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: saturate(1.2) blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+.brand { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.brand-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--accent); align-self: center; flex: none;
+}
+.brand-name { font-weight: 650; letter-spacing: 0.01em; }
+.brand-sub {
+  color: var(--muted); font-size: 0.72rem; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+@media (max-width: 520px) { .brand-sub { display: none; } }
+
+.topbar-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.help-now {
+  border: 1px solid color-mix(in srgb, var(--crisis) 40%, var(--border));
+  background: var(--crisis-soft);
+  color: var(--crisis);
+  font-weight: 620;
+  font-size: 0.82rem;
+  padding: 8px 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.help-now:hover { background: color-mix(in srgb, var(--crisis-soft) 80%, var(--crisis) 12%); }
+.icon-btn {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  width: 38px; height: 38px;
+  border-radius: 10px;
+  font-size: 1rem;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.icon-btn:hover { background: var(--surface-2); }
+
+/* ---- Nag -------------------------------------------------------------- */
+.nag {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 16px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 0.82rem;
+  border-bottom: 1px solid var(--border);
+}
+.nag-btn {
+  margin-left: auto;
+  border: 1px solid var(--accent);
+  background: transparent; color: var(--accent);
+  padding: 5px 10px; border-radius: 8px; font-size: 0.8rem; font-weight: 600;
+}
+.nag-x { border: none; background: transparent; color: var(--muted); font-size: 1.1rem; }
+
+/* ---- Pairing ---------------------------------------------------------- */
+.pair {
+  flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.pair-card {
+  width: 100%; max-width: 380px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px 24px;
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+.pair-card h1 { font-size: 1.25rem; margin: 0 0 8px; }
+.pair-card p { color: var(--muted); font-size: 0.9rem; margin: 0 0 16px; }
+.pair-card code {
+  background: var(--surface-2); padding: 2px 6px; border-radius: 6px; font-size: 0.85em;
+}
+.pair-input {
+  width: 100%; text-align: center; letter-spacing: 0.18em; text-transform: uppercase;
+  font-size: 1.25rem; padding: 12px; margin-bottom: 14px;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg); color: var(--text);
+}
+.pair-error { color: var(--crisis); font-size: 0.85rem; margin: 12px 0 0; }
+.primary {
+  width: 100%; border: none; border-radius: 10px; padding: 12px;
+  background: var(--accent); color: #fff; font-size: 0.95rem; font-weight: 620;
+}
+.primary:hover { filter: brightness(1.05); }
+
+/* ---- Conversation ----------------------------------------------------- */
+.room { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.transcript {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 16px 8px;
+  display: flex; flex-direction: column; gap: 14px;
+  width: 100%; max-width: 720px; margin: 0 auto;
+}
+.msg {
+  max-width: 88%;
+  padding: 11px 14px;
+  border-radius: var(--radius);
+  font-size: 0.95rem;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+.msg-you {
+  align-self: flex-end;
+  background: var(--sage-soft);
+  border: 1px solid color-mix(in srgb, var(--sage) 30%, var(--border));
+  border-bottom-right-radius: 4px;
+}
+.msg-alex {
+  align-self: flex-start;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 4px;
+}
+.msg-note {
+  align-self: center; text-align: center;
+  color: var(--muted); font-size: 0.82rem; background: transparent;
+  max-width: 100%;
+}
+.msg-crisis {
+  align-self: stretch; max-width: 100%;
+  background: var(--crisis-soft);
+  border: 1px solid color-mix(in srgb, var(--crisis) 35%, var(--border));
+}
+.msg .who { display: block; font-size: 0.7rem; color: var(--muted); margin-bottom: 3px; letter-spacing: 0.03em; }
+.typing { color: var(--muted); font-style: italic; }
+
+/* ---- Composer --------------------------------------------------------- */
+.composer {
+  width: 100%; max-width: 720px; margin: 0 auto;
+  padding: 8px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+  background: var(--bg);
+  position: sticky; bottom: 0;
+}
+.mood-row {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  padding: 8px 4px; margin-bottom: 6px;
+}
+.mood-label { font-size: 0.8rem; color: var(--muted); width: 100%; }
+.mood-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.mood-chip {
+  min-width: 34px; height: 34px; border-radius: 9px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  font-size: 0.85rem;
+}
+.mood-chip:hover { background: var(--accent-soft); border-color: var(--accent); }
+.mood-chip[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+.link-btn { border: none; background: transparent; color: var(--muted); font-size: 0.8rem; text-decoration: underline; }
+
+.composer-form {
+  display: flex; align-items: flex-end; gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 6px 6px 6px 8px;
+  box-shadow: var(--shadow);
+}
+.input {
+  flex: 1;
+  border: none; background: transparent; color: var(--text);
+  font-family: inherit; font-size: 0.98rem; line-height: 1.45;
+  resize: none; max-height: 140px; padding: 8px 4px;
+}
+.input:focus { outline: none; }
+.send {
+  flex: none;
+  width: 40px; height: 40px; border-radius: 12px;
+  border: none; background: var(--accent); color: #fff; font-size: 1.15rem;
+}
+.send:disabled { opacity: 0.5; cursor: default; }
+.send:hover:not(:disabled) { filter: brightness(1.05); }
+
+/* ---- Homework drawer -------------------------------------------------- */
+.scrim {
+  position: fixed; inset: 0; z-index: 40;
+  background: rgba(20, 16, 12, 0.42);
+}
+.drawer {
+  position: fixed; z-index: 50; top: 0; right: 0; bottom: 0;
+  width: min(360px, 86vw);
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  display: flex; flex-direction: column;
+  animation: slide-in 0.18s ease-out;
+}
+@keyframes slide-in { from { transform: translateX(20px); opacity: 0.4; } to { transform: none; opacity: 1; } }
+.drawer-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px; border-bottom: 1px solid var(--border);
+}
+.drawer-head h2 { margin: 0; font-size: 1.05rem; }
+.drawer-body { padding: 12px 16px; overflow-y: auto; }
+.hw-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 0; border-bottom: 1px solid var(--border);
+}
+.hw-check {
+  flex: none; width: 26px; height: 26px; border-radius: 8px;
+  border: 1px solid var(--sage); background: transparent; color: var(--sage);
+}
+.hw-title { font-size: 0.9rem; }
+.hw-meta { font-size: 0.74rem; color: var(--muted); }
+.hw-empty { color: var(--muted); font-size: 0.88rem; padding: 8px 0; }
+
+/* ---- Crisis overlay --------------------------------------------------- */
+.crisis-overlay {
+  position: fixed; inset: 0; z-index: 60;
+  background: var(--bg);
+  padding: 24px 18px calc(24px + env(safe-area-inset-bottom, 0px));
+  overflow-y: auto;
+  display: flex; flex-direction: column; align-items: center; gap: 18px;
+}
+.crisis-card {
+  width: 100%; max-width: 560px;
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--crisis) 30%, var(--border));
+  border-radius: var(--radius);
+  padding: 22px;
+  box-shadow: var(--shadow);
+}
+.crisis-card h1 { font-size: 1.2rem; margin: 0 0 6px; color: var(--crisis); }
+.crisis-card .lede { color: var(--muted); font-size: 0.92rem; margin: 0 0 16px; }
+.crisis-line {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  padding: 12px 0; border-top: 1px solid var(--border);
+}
+.crisis-line:first-of-type { border-top: none; }
+.crisis-name { font-weight: 600; }
+.crisis-note { display: block; font-size: 0.78rem; color: var(--muted); margin-top: 2px; }
+.crisis-num {
+  flex: none; font-size: 1.05rem; font-weight: 700; color: var(--accent);
+  text-decoration: none; padding: 4px 10px; border-radius: 8px; background: var(--accent-soft);
+}
+.crisis-shreya { margin-top: 16px; padding: 14px; background: var(--sage-soft); border-radius: 10px; }
+.crisis-shreya strong { display: block; margin-bottom: 6px; }
+.crisis-draft { font-style: italic; color: var(--text); font-size: 0.9rem; }
+.crisis-breath { margin-top: 16px; font-size: 0.9rem; color: var(--muted); }
+.crisis-close {
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  padding: 12px 18px; border-radius: 999px; font-size: 0.92rem;
+}

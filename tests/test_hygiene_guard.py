@@ -26,6 +26,8 @@ _FORBIDDEN = (
     re.compile(r"^inbox/"),                 # session digests
     re.compile(r"^data/session_state\.json$"),   # Phase 3: last_session_at/last_topic + marker
     re.compile(r"^data/\.session_state\.[^/]*\.tmp$"),  # atomic-write temp
+    re.compile(r"(^|/)pairing\.db"),             # Phase 5: device-token hashes (auth secrets)
+    re.compile(r"(^|/)alexd\.pid$"),             # Phase 5: alexd pidfile
 )
 
 
