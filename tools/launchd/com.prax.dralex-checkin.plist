@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Dr. Alex nightly check-in — DISABLED BY DEFAULT (council D5, gardener enable pattern).
+
+  Shipped intentionally inert: `Disabled` is true and it is NOT loaded. At 21:30
+  it runs `dr-alex checkin --notify`, which posts a macOS local notification with a FIXED,
+  non-interpolated body ("Evening check-in whenever you're ready — no agenda.") and drops a next-open TUI banner flag.
+  It is NEVER safety-critical and never carries any therapy data (a lock screen is semi-public —
+  council D5 rider). ntfy is the Phase-5 / Tailscale-era upgrade for phone delivery.
+
+  To ENABLE (one command — you, deliberately):
+      cp tools/launchd/com.prax.dralex-checkin.plist ~/Library/LaunchAgents/ \
+        && launchctl load -w ~/Library/LaunchAgents/com.prax.dralex-checkin.plist
+
+  To DISABLE again:
+      launchctl unload -w ~/Library/LaunchAgents/com.prax.dralex-checkin.plist
+
+  Edit ProgramArguments to your installed `dr-alex` path and WorkingDirectory to your checkout
+  before enabling.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.prax.dralex-checkin</string>
+
+    <key>Disabled</key>
+    <true/>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/sh</string>
+        <string>-lc</string>
+        <string>dr-alex checkin --notify</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>REPLACE_WITH_YOUR/dr-alex</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>21</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

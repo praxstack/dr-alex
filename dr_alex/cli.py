@@ -4,6 +4,10 @@ Modes
 -----
     dr-alex               full warm session (Textual TUI)
     dr-alex checkin       gentle nightly "how was today?" opener (TUI)
+    dr-alex checkin --notify   post the FIXED nightly notification (what the launchd job runs)
+    dr-alex export --from <date> --to <date> [--redaction summary|full]
+                          date-ranged markdown + self-contained HTML (print-to-PDF)
+    dr-alex review        a default last-30-days export, ready to print-to-PDF
     dr-alex "some text"   one-shot: a single safety-first exchange, printed and done
     dr-alex serve         run alexd (The Room) in the foreground — http://127.0.0.1:8787/
     dr-alex pair          mint a one-time pairing code for the PWA (single-use, ≤5min)
@@ -160,6 +164,84 @@ def _revoke_command(args: list[str]) -> int:
     return 0 if ok else 1
 
 
+def _opt(args: list[str], name: str) -> str | None:
+    """Read ``--name value`` or ``--name=value`` from args; None if absent."""
+    for i, a in enumerate(args):
+        if a == name and i + 1 < len(args):
+            return args[i + 1]
+        if a.startswith(name + "="):
+            return a.split("=", 1)[1]
+    return None
+
+
+def _checkin_command(args: list[str]) -> int:
+    """`dr-alex checkin [--notify]` — the TUI opener, or the launchd notification path."""
+    if "--notify" in args:
+        from dr_alex import checkin
+
+        posted = checkin.run_checkin_notify()
+        # Body-free status only (R3): never echo any therapy data (there is none on this path).
+        print("check-in notification posted." if posted
+              else "check-in notification could not be posted (non-fatal).", file=sys.stderr)
+        return 0
+    if "--install-plist" in args:
+        from dr_alex import checkin
+
+        print("Nightly check-in LaunchAgent (DISABLED by default). To enable (one command):")
+        print(f"  cp {checkin.plist_relpath()} ~/Library/LaunchAgents/ \\")
+        print(f"    && launchctl load -w ~/Library/LaunchAgents/{checkin.PLIST_LABEL}.plist")
+        print(f"  (default {21:02d}:{30:02d}; body is a FIXED string, never any therapy data)")
+        return 0
+    from dr_alex import app
+
+    app.run("checkin")
+    return 0
+
+
+def _export_command(args: list[str]) -> int:
+    """`dr-alex export --from <date> --to <date> [--redaction summary|full]`."""
+    from dr_alex import export
+
+    frm = _opt(args, "--from")
+    to = _opt(args, "--to")
+    redaction = _opt(args, "--redaction") or "summary"
+    if not frm or not to:
+        print("Usage: dr-alex export --from YYYY-MM-DD --to YYYY-MM-DD "
+              "[--redaction summary|full]", file=sys.stderr)
+        return 2
+    res = export.export_range(frm, to, redaction=redaction, write=True)
+    if not res.ok:
+        print(f"export failed: {res.error}", file=sys.stderr)
+        return 1
+    print(f"Export ({res.redaction}) {res.from_date} → {res.to_date}:")
+    print(f"  markdown: {res.markdown_path}")
+    print(f"  html:     {res.html_path}")
+    print("  Open the HTML and use the browser's print-to-PDF. Nothing was sent.")
+    return 0
+
+
+def _review_command(args: list[str]) -> int:
+    """`dr-alex review [--days N] [--redaction summary|full]` — default last-30-days export."""
+    from dr_alex import export
+
+    redaction = _opt(args, "--redaction") or "summary"
+    days = 30
+    d = _opt(args, "--days")
+    if d:
+        try:
+            days = int(d)
+        except ValueError:
+            print(f"bad --days value: {d}", file=sys.stderr)
+            return 2
+    res = export.review(days=days, redaction=redaction, write=True)
+    if not res.ok:
+        print(f"review failed: {res.error}", file=sys.stderr)
+        return 1
+    print(f"Review export ({res.redaction}) last {days} days → {res.html_path}")
+    print("  Open the HTML and print-to-PDF. Nothing was sent.")
+    return 0
+
+
 def _shreya_command(args: list[str]) -> int:
     """`dr-alex shreya [--days N] [--print]` — generate the G11 Friday Shreya-prep packet."""
     from dr_alex import shreya_packet
@@ -272,6 +354,12 @@ def main(argv: list[str] | None = None) -> int:
     if args and args[0] == "eval":
         return _eval_command(args[1:])
 
+    if args and args[0] == "export":
+        return _export_command(args[1:])
+
+    if args and args[0] == "review":
+        return _review_command(args[1:])
+
     if args and args[0] == "shreya":
         return _shreya_command(args[1:])
 
@@ -287,11 +375,8 @@ def main(argv: list[str] | None = None) -> int:
         app.run("full")
         return 0
 
-    if args[0] == "checkin" and len(args) == 1:
-        from dr_alex import app
-
-        app.run("checkin")
-        return 0
+    if args[0] == "checkin":
+        return _checkin_command(args[1:])
 
     # Anything else: treat the joined arguments as a one-shot message.
     return _print_oneshot(" ".join(args))

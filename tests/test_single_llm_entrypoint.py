@@ -68,11 +68,16 @@ def _spawning_functions() -> list[tuple[str, str]]:
 #   - dr_alex/filevault.py::_run_fdesetup — Phase 4: `fdesetup status` (FileVault check).
 #   - dr_alex/backup.py::_run_git         — Phase 4: read-only `git` for G19 durability
 #                                           bundles (NEVER add/commit/push, NEVER the model).
+#   - dr_alex/checkin.py::_default_runner  — Phase 7: `osascript` posts the nightly local
+#                                           notification with a FIXED, non-interpolated body
+#                                           (council D5). NEVER the model, never any therapy
+#                                           data; injectable so tests don't spawn it.
 _SANCTIONED_SPAWNS = {
     ("dr_alex/llm.py", "complete"),
     ("dr_alex/memstore.py", "_run"),
     ("dr_alex/filevault.py", "_run_fdesetup"),
     ("dr_alex/backup.py", "_run_git"),
+    ("dr_alex/checkin.py", "_default_runner"),
 }
 
 

@@ -934,6 +934,39 @@ def window_snapshot(
     return snap
 
 
+# ---------------------------------------------------------------------------
+# Phase 7 — generic date-range reads for the exporter (structured columns only).
+# ---------------------------------------------------------------------------
+
+
+def mood_events_between(from_ts: str, to_ts: str, *, path: Path | None = None) -> list[tuple[str, int]]:
+    """(ts, mood) mood chips with ``from_ts <= ts <= to_ts`` (ISO8601 Z), oldest→newest."""
+    if not telemetry_enabled():
+        return []
+    try:
+        with _connect(path) as conn:
+            return conn.execute(
+                "SELECT ts, mood FROM mood_events WHERE ts >= ? AND ts <= ? ORDER BY ts",
+                (from_ts, to_ts),
+            ).fetchall()
+    except sqlite3.Error:
+        return []
+
+
+def turn_tiers_between(from_ts: str, to_ts: str, *, path: Path | None = None) -> list[tuple[str, str]]:
+    """(ts, tier) per-turn traces in the window (for risk-event rollups in the export)."""
+    if not telemetry_enabled():
+        return []
+    try:
+        with _connect(path) as conn:
+            return conn.execute(
+                "SELECT ts, tier FROM turn_traces WHERE ts >= ? AND ts <= ? ORDER BY ts",
+                (from_ts, to_ts),
+            ).fetchall()
+    except sqlite3.Error:
+        return []
+
+
 def _session_moods_conn(conn: sqlite3.Connection, session_id: str) -> tuple[int | None, int | None]:
     rows = conn.execute(
         "SELECT phase, mood FROM mood_events WHERE session_id=? ORDER BY ts", (session_id,)
