@@ -20,6 +20,7 @@ GREEN - normal conversation.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 
@@ -31,6 +32,21 @@ class Tier(str, Enum):
 
     def __str__(self) -> str:  # pragma: no cover - cosmetic
         return self.value
+
+
+@dataclass(frozen=True)
+class TriageResult:
+    """The deterministic verdict for one turn — the safety token the LLM entrypoint
+    structurally requires (Directive 1). A model reply cannot be requested without one,
+    and ``tier is RED`` must short-circuit *before* the entrypoint is ever called.
+    """
+
+    tier: Tier
+    night: bool = False
+
+    @property
+    def is_red(self) -> bool:
+        return self.tier is Tier.RED
 
 
 # ---------------------------------------------------------------------------
@@ -439,3 +455,8 @@ def triage(text: str, recent_risk: object = None, now: datetime | None = None) -
         tier = Tier.AMBER
 
     return tier
+
+
+def assess(text: str, recent_risk: object = None, now: datetime | None = None) -> TriageResult:
+    """``triage`` wrapped in the :class:`TriageResult` the LLM entrypoint requires."""
+    return TriageResult(tier=triage(text, recent_risk=recent_risk, now=now), night=_is_night(now))
