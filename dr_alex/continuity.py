@@ -9,7 +9,9 @@ so its first real reply can be specific.
 
 from __future__ import annotations
 
+import os
 import re
+from pathlib import Path
 
 from dr_alex import paths
 
@@ -32,6 +34,29 @@ _GROUNDED_REFERENCE = (
 def load_continuity_text() -> str | None:
     """Full continuity brief text, or None if unavailable."""
     return paths.read_text("data", "continuity.md")
+
+
+def continuity_write_path() -> Path:
+    """Where a regenerated brief is written (the source-tree ``data/continuity.md``)."""
+    found = paths.find("data")
+    base = found if found is not None else (Path(__file__).resolve().parent.parent / "data")
+    return base / "continuity.md"
+
+
+def save_continuity_text(text: str) -> Path:
+    """Write the continuity brief 0600 under a 0700 ``data/`` dir (clinical, gitignored)."""
+    p = continuity_write_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(p.parent, 0o700)
+    except OSError:
+        pass
+    p.write_text(text, encoding="utf-8")
+    try:
+        os.chmod(p, 0o600)
+    except OSError:
+        pass
+    return p
 
 
 def greeting_reference(text: str | None = None) -> str:

@@ -8,7 +8,7 @@ pure crisis card and never calls the LLM.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from rich.markup import escape
 from textual import work
@@ -17,10 +17,14 @@ from textual.containers import Center, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Input, Static
 
-from dr_alex import engine, gates, llm
+from dr_alex import engine, fanout, gates, llm, memstore, statefile
 from dr_alex.session import SessionState
 from safety import crisis_card, crisis_questioning
 from safety.triage import Tier
+
+
+def _iso_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 PERSONA_TITLE = "Dr. Alex Morgan"
 PERSONA_SUBTITLE = "support between your sessions with Shreya"
@@ -161,6 +165,13 @@ class DrAlexApp(App[None]):
         self._recent_risk: Tier | None = None
         self._session = SessionState()
         self._system_prompt = engine.system_prompt()
+        # Phase 3 session bookkeeping (drives the end-of-session fan-out + G5/G8).
+        self._session_id = _iso_now().replace(":", "").replace("-", "")
+        self._session_started_at = _iso_now()
+        self._user_turns = 0
+        self._risk_tier_max = Tier.GREEN
+        self._finalized = False
+        self._explicit_close = False  # set by /bye|/quit|/exit — distinguishes from a stray exit
 
     # -- layout -----------------------------------------------------------
 
@@ -184,6 +195,41 @@ class DrAlexApp(App[None]):
         else:
             opener = engine.greeting()
         self._add_message("alex", opener)
+        # G8: a loud staleness banner from cheap state (no subprocess), shown immediately.
+        self._show_staleness_banner()
+        # Memory is a session-start READ that shells out to memctl — do it off the UI thread,
+        # and only when the store is wired (disabled in tests / degraded environments).
+        if memstore.memory_enabled():
+            self._start_memory()
+
+    def _show_staleness_banner(self) -> None:
+        try:
+            from dr_alex import reorient
+            state = statefile.load()
+            banner = reorient.staleness_banner(
+                now=datetime.now(timezone.utc),
+                continuity_generated_at=state.continuity_generated_at,
+                has_unfinalized=bool(state.unfinalized),
+            )
+        except Exception:  # noqa: BLE001 — the banner must never break startup
+            banner = None
+        if banner:
+            self._add_message("note", f"[b]note:[/b] {escape(banner)}")
+
+    @work(thread=True, exclusive=True, group="memory")
+    def _start_memory(self) -> None:
+        """Complete any crashed fan-out, then assemble the once-per-session memory context."""
+        try:
+            fanout.recover_if_needed()
+        except Exception:  # noqa: BLE001 — recovery is best-effort; never block a session
+            pass
+        try:
+            mem = engine.assemble_startup_memory()
+            sp = engine.system_prompt_with_memory(mem)
+        except Exception:  # noqa: BLE001 — a broken store degrades to the base prompt
+            return
+        # Fold the immutable memory context into the system prompt for every turn (G20).
+        self._system_prompt = sp
 
     # -- message helpers --------------------------------------------------
 
@@ -216,6 +262,7 @@ class DrAlexApp(App[None]):
     def _handle_command(self, text: str) -> bool:
         low = text.lower()
         if low in ("/bye", "/quit", "/exit"):
+            self._explicit_close = True
             self.exit()
             return True
         if low == "/help":
@@ -237,6 +284,9 @@ class DrAlexApp(App[None]):
         """STEP 0: triage FIRST. RED short-circuits before any model call."""
         tier = engine.classify(text, recent_risk=self._recent_risk, now=datetime.now())
         self._recent_risk = tier
+        self._user_turns += 1
+        if _TIER_RANK[tier] > _TIER_RANK[self._risk_tier_max]:
+            self._risk_tier_max = tier
 
         if tier is Tier.RED:
             # Hard gate: render the pure crisis card + grounding. No LLM.
@@ -299,6 +349,33 @@ class DrAlexApp(App[None]):
 
     def _scroll_chat(self) -> None:
         self.query_one("#chat", VerticalScroll).scroll_end(animate=False)
+
+    # -- session-end fan-out (Channels B + C) -----------------------------
+
+    def on_unmount(self) -> None:
+        """On TUI exit, fan the session out to durable memory (idempotent, best-effort).
+
+        Only when the store is wired AND a real conversation happened. A '/bye' is an
+        explicit close; an incidental exit needs > 2 user turns. Never raises on the way out.
+        """
+        if self._finalized or not memstore.memory_enabled():
+            return
+        if not fanout.should_finalize(self._user_turns, explicit_close=self._explicit_close):
+            return
+        self._finalized = True
+        turns = [(m.role, m.content) for m in self._history]
+        try:
+            fanout.finalize_session(
+                turns,
+                session_id=self._session_id,
+                started_at=self._session_started_at,
+                risk_tier_max=self._risk_tier_max.value,
+            )
+        except Exception:  # noqa: BLE001 — session end must never crash on the way out
+            pass
+
+
+_TIER_RANK = {Tier.GREEN: 0, Tier.AMBER: 1, Tier.RED: 2}
 
 
 def run(mode: str = "full") -> None:
