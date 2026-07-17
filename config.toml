@@ -23,3 +23,36 @@
 # pathologizing — is a clinical judgment that belongs to Prax's real therapist, not to
 # this build. Until then: "full".
 crisis_card_style = "full"
+
+[records]
+# The canonical, human-readable local record (council D4). It is the source of truth; the
+# Notion mirror and the exporters all READ this configured path (they never hardcode).
+#
+# Default (commented out): "<repo>/records/Active-File.md" — the records/ dir is 0700, the
+# file is 0600, and records/ is gitignored. Plaintext markdown is deliberate (a decrypt-tool
+# would defeat the point of a human-readable canonical record); the compensating control is
+# the Phase-4 FileVault-off startup warning + the file perms + the gitignore guard.
+#
+# PraxVault migration (one line): when the encrypted vault exists on this Mac, point
+# active_file at it, e.g.
+#   active_file = "~/Library/Mobile Documents/iCloud~md~obsidian/Documents/PraxVault/DrAlex/Active-File.md"
+# Nothing else changes — every reader resolves this path.
+# active_file = "~/dr-alex/records/Active-File.md"
+# dir = "~/dr-alex/records"
+
+[notion]
+# detail_level controls how much of a finished session is mirrored to Notion (Phase 6).
+# A RAW TRANSCRIPT is NEVER mirrored at any level, and a RED-tier session is always forced
+# down to "summary" and flagged "reviewed offline".
+#
+#   "summary"    — DEFAULT. mood in/out, risk tier, technique NAMES, one-line insight.
+#                  No transcript, no verbatim, no thread titles.
+#   "structured" — the above + open/closed thread titles + homework titles.
+#   "full"       — the above + a short summary paragraph (the continuity-style insight).
+#
+# The Notion token and database IDs live ONLY in the macOS Keychain (never here, never git):
+#   security add-generic-password -s dr-alex -a notion-token      -w 'secret_XXXX'
+#   security add-generic-password -s dr-alex -a notion-db-sessions -w '<sessions_database_id>'
+#   security add-generic-password -s dr-alex -a notion-db-homework -w '<homework_database_id>'
+# Until the token is present the mirror is gracefully DISABLED (nothing is sent).
+detail_level = "summary"

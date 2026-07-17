@@ -13,6 +13,9 @@ Modes
     dr-alex books status  show the corpus manifest + index state
     dr-alex backup        G19 durability: git bundle + encrypted state.db snapshot
     dr-alex eval --once   G13 nightly eval (relative drift); normally run by the (disabled) cron
+    dr-alex shreya        G11 Friday Shreya-prep packet (local draft; never sent)
+    dr-alex records       show the canonical Active File path (creating the scaffold if needed)
+    dr-alex notion status show whether the Notion mirror is enabled (secrets stay in Keychain)
     dr-alex --card        print the crisis card (pure, no LLM) and exit
     dr-alex --version
 """
@@ -157,6 +160,66 @@ def _revoke_command(args: list[str]) -> int:
     return 0 if ok else 1
 
 
+def _shreya_command(args: list[str]) -> int:
+    """`dr-alex shreya [--days N] [--print]` — generate the G11 Friday Shreya-prep packet."""
+    from dr_alex import shreya_packet
+
+    days = 7
+    do_print = False
+    for a in args:
+        if a.startswith("--days="):
+            try:
+                days = int(a.split("=", 1)[1])
+            except ValueError:
+                print(f"bad --days value: {a}", file=sys.stderr)
+                return 2
+        elif a == "--print":
+            do_print = True
+    res = shreya_packet.generate(window_days=days)
+    if res.out_path:
+        print(f"Shreya-prep packet: {res.out_path}"
+              + ("" if res.ok else "  (GENERATION FAILED — see the loud placeholder inside)"))
+    if do_print:
+        print("\n" + res.text)
+    return 0 if res.ok else 1
+
+
+def _records_command(args: list[str]) -> int:
+    """`dr-alex records` — print the canonical Active File path (scaffolding it if absent)."""
+    from dr_alex import records
+
+    p = records.ensure_scaffold()
+    print(f"Canonical Active File: {p}")
+    return 0
+
+
+def _notion_command(args: list[str]) -> int:
+    """`dr-alex notion status` — report mirror enablement WITHOUT ever printing a secret."""
+    from dr_alex import notion
+
+    sub = args[0] if args else "status"
+    if sub != "status":
+        print(f"Unknown notion subcommand: {sub!r}. Use 'status'.", file=sys.stderr)
+        return 2
+    cfg = notion.load_notion_config()
+    if cfg is None:
+        print("Notion mirror: DISABLED (no token in the macOS Keychain).")
+        print("To enable, run these in a terminal (Prax only — the model never sees the values):")
+        print(f"  security add-generic-password -s {notion.crypto.SERVICE} "
+              f"-a {notion.TOKEN_ACCOUNT}       -w '<notion_integration_token>'")
+        print(f"  security add-generic-password -s {notion.crypto.SERVICE} "
+              f"-a {notion.SESSIONS_DB_ACCOUNT} -w '<sessions_database_id>'")
+        print(f"  security add-generic-password -s {notion.crypto.SERVICE} "
+              f"-a {notion.HOMEWORK_DB_ACCOUNT} -w '<homework_database_id>'")
+        return 0
+    print("Notion mirror: ENABLED (token present in Keychain).")
+    print(f"  sessions DB configured: {'yes' if cfg.sessions_db else 'NO — set it'}")
+    print(f"  homework DB configured: {'yes' if cfg.homework_db else 'NO — set it'}")
+    print(f"  detail level: {notion.config.notion_detail_level()}  "
+          "(RED sessions are always forced to summary + 'reviewed offline')")
+    return 0
+
+
 def _print_oneshot(text: str) -> int:
     # Imported lazily so `--card` / `--version` don't pull in the model path.
     from dr_alex import engine
@@ -208,6 +271,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if args and args[0] == "eval":
         return _eval_command(args[1:])
+
+    if args and args[0] == "shreya":
+        return _shreya_command(args[1:])
+
+    if args and args[0] == "records":
+        return _records_command(args[1:])
+
+    if args and args[0] == "notion":
+        return _notion_command(args[1:])
 
     if not args:
         from dr_alex import app
