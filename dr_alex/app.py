@@ -18,7 +18,8 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, Static
 
 from dr_alex import engine, gates, llm
-from safety import crisis_card
+from dr_alex.session import SessionState
+from safety import crisis_card, crisis_questioning
 from safety.triage import Tier
 
 PERSONA_TITLE = "Dr. Alex Morgan"
@@ -158,6 +159,7 @@ class DrAlexApp(App[None]):
         self.mode = mode
         self._history: list[llm.Message] = []
         self._recent_risk: Tier | None = None
+        self._session = SessionState()
         self._system_prompt = engine.system_prompt()
 
     # -- layout -----------------------------------------------------------
@@ -238,7 +240,7 @@ class DrAlexApp(App[None]):
 
         if tier is Tier.RED:
             # Hard gate: render the pure crisis card + grounding. No LLM.
-            self._add_message("crisis", engine.red_response_rich())
+            self._add_message("crisis", engine.red_response_rich(text))
             self._add_message(
                 "note",
                 "[b]Reach Shreya.[/b] A message you could send her (you send it, not me):\n"
@@ -256,22 +258,39 @@ class DrAlexApp(App[None]):
         messages = list(self._history)
         # STEP 1 + 2: book retrieval (after triage) + labeled context assembly.
         retrieved, book_ctx = engine.retrieve_context(user_text)
-        # STEP 3: single model entrypoint. Gates need the whole reply, so buffer it.
-        raw = "".join(
-            llm.stream(messages, tier, system_prompt=self._system_prompt, book_context=book_ctx)
-        ).strip() or "(no response)"
+        # G1: crisis-questioning directive for this AMBER turn (already-asked -> do not re-ask).
+        safety_note = engine.safety_probe_note(self._session, tier, user_text)
 
-        def _regenerate(corrective: str) -> str:
+        def _stream(note: str | None, corrective: str | None = None) -> str:
             return "".join(
                 llm.stream(
                     messages, tier, system_prompt=self._system_prompt,
-                    book_context=book_ctx, corrective=corrective,
+                    book_context=book_ctx, corrective=corrective, safety_note=note,
                 )
             ).strip()
 
+        # STEP 3: single model entrypoint. Gates need the whole reply, so buffer it.
+        raw = _stream(safety_note) or "(no response)"
+
+        # G1 deterministic re-ask backstop: if the probe was already capped and the model
+        # asked anyway, regenerate ONCE with a hardened directive (block, don't hope).
+        safety_action = "none"
+        if self._session.suppress_safety_probe:
+            safety_action = "probe-suppressed"
+            if crisis_questioning.is_safety_probe(raw):
+                hardened = crisis_questioning.probe_directive(asked=True, declined=True)
+                regen = _stream(hardened)
+                if regen:
+                    raw = regen
+                safety_action = "reask-blocked"
+
         # STEP 4: deterministic output gates before anything reaches the screen.
-        outcome = gates.apply(raw, retrieved, regenerate=_regenerate)
-        engine.trace_turn(tier, retrieved, outcome)  # STEP 5
+        outcome = gates.apply(raw, retrieved, regenerate=lambda c: _stream(safety_note, c))
+        if crisis_questioning.is_safety_probe(outcome.text):
+            self._session.safety_probe_asked = True
+            if safety_action == "none":
+                safety_action = "probe-asked"
+        engine.trace_turn(tier, retrieved, outcome, safety_action)  # STEP 5
         reply = outcome.text or "(no response)"
 
         self._history.append(llm.Message(role="assistant", content=reply))

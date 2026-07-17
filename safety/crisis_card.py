@@ -118,3 +118,58 @@ def render_rich() -> str:
 def all_numbers() -> list[str]:
     """Every phone number on the card (for tests / validation)."""
     return [number for _name, number, _note in CRISIS_RESOURCES]
+
+
+# --- Graded register (G4, flag-gated) ------------------------------------------
+#
+# For PASSIVE ideation only (no plan/means/intent — e.g. "don't want to be here",
+# "jeena nahi chahta"), and ONLY when crisis_card_style == "graded". The clinical
+# lesson from the earlier production system ("never lead with hotlines" for passive hopelessness): a full
+# hotline dump on passive despair reads as panic-escalation and pathologizing. This
+# variant validates the feeling, stays present, nudges Shreya *today*, and keeps ONE
+# always-available line (Tele-MANAS) — safety intact, register warmer. Still 100%
+# deterministic, zero LLM. Explicit ideation always gets the FULL card, unchanged.
+
+#: The single always-open line kept in the warmer variant (not the full dump).
+GRADED_ALWAYS_OPEN = "And if it ever tips past this: Tele-MANAS is 14416, anytime — day or night."
+
+GRADED_BODY = (
+    "You reached out, and that matters. What you're feeling right now is heavy and "
+    "real — you don't have to hold it alone, and you don't have to fix it tonight.\n\n"
+    "Could you reach Shreya today? Even a short message counts, and you'd be the one "
+    "to send it — not me."
+)
+
+
+def render_graded_text() -> str:
+    """Warmer plain-text variant for passive ideation (graded register)."""
+    lines = [
+        GROUNDING_LINE,
+        "",
+        GRADED_BODY,
+        "",
+        "A message you could send Shreya (you send it, not the app):",
+        f'    "{SHREYA_REACH_OUT_DRAFT}"',
+        "",
+        GRADED_ALWAYS_OPEN,
+        "",
+        GROUNDING_BREATH,
+    ]
+    return "\n".join(lines)
+
+
+def render_graded_rich() -> str:
+    """Warmer Rich-markup variant for passive ideation (graded register)."""
+    lines = [
+        f"[b]{GROUNDING_LINE}[/b]",
+        "",
+        GRADED_BODY,
+        "",
+        "[dim]A message you could send Shreya (you send it, not the app):[/dim]",
+        f'    [i]"{SHREYA_REACH_OUT_DRAFT}"[/i]',
+        "",
+        GRADED_ALWAYS_OPEN,
+        "",
+        f"[dim]{GROUNDING_BREATH}[/dim]",
+    ]
+    return "\n".join(lines)

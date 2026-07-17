@@ -104,15 +104,20 @@ def build_prompt(
     *,
     book_context: str | None = None,
     corrective: str | None = None,
+    safety_note: str | None = None,
 ) -> str:
     """The -p prompt: SAFETY_STATE + optional BOOK_CONTEXT + the conversation so far.
 
     ``book_context`` is the labeled ``<BOOK_CONTEXT cite="required">`` block (built by the
     engine from this turn's retrieval). ``corrective`` is an extra instruction appended on
-    a regeneration (e.g. the anti-dependency lint's one retry).
+    a regeneration (e.g. the anti-dependency lint's one retry). ``safety_note`` is the
+    crisis-questioning-discipline directive (G1): on an AMBER turn where the one-time
+    safety check-in was already offered, it injects "already asked — do not re-ask".
     """
-    safety_note = "\n" + _AMBER_GROUNDING_NOTE if tier is Tier.AMBER else ""
-    header = f'<SAFETY_STATE tier="{tier.value}">{safety_note}\n</SAFETY_STATE>'
+    amber = "\n" + _AMBER_GROUNDING_NOTE if tier is Tier.AMBER else ""
+    if safety_note:
+        amber += "\n" + safety_note.strip()
+    header = f'<SAFETY_STATE tier="{tier.value}">{amber}\n</SAFETY_STATE>'
     parts = [header, ""]
     if book_context:
         parts.extend([book_context, ""])
@@ -148,6 +153,7 @@ def complete(
     timeout: int = DEFAULT_TIMEOUT,
     book_context: str | None = None,
     corrective: str | None = None,
+    safety_note: str | None = None,
 ) -> LLMResult:
     """Invoke the model for one turn. The ONLY function that spawns ``claude``.
 
@@ -164,7 +170,10 @@ def complete(
             error="claude CLI not found on PATH", used_fallback=True,
         )
 
-    prompt = build_prompt(messages, triage.tier, book_context=book_context, corrective=corrective)
+    prompt = build_prompt(
+        messages, triage.tier, book_context=book_context,
+        corrective=corrective, safety_note=safety_note,
+    )
     cmd = _base_cmd(system_prompt, "text")
     try:
         proc = subprocess.run(
@@ -201,11 +210,13 @@ def generate(
     timeout: int = DEFAULT_TIMEOUT,
     book_context: str | None = None,
     corrective: str | None = None,
+    safety_note: str | None = None,
 ) -> LLMResult:
     """Full (non-streaming) response. Thin adapter over the single entrypoint."""
     return complete(
         TriageResult(tier=tier), messages, system_prompt=system_prompt,
         timeout=timeout, book_context=book_context, corrective=corrective,
+        safety_note=safety_note,
     )
 
 
@@ -217,6 +228,7 @@ def stream(
     timeout: int = DEFAULT_TIMEOUT,
     book_context: str | None = None,
     corrective: str | None = None,
+    safety_note: str | None = None,
 ) -> Iterator[str]:
     """Yield the reply. Gates need the full text, so this is one chunk (see module doc).
 
@@ -226,6 +238,7 @@ def stream(
     yield complete(
         TriageResult(tier=tier), messages, system_prompt=system_prompt,
         timeout=timeout, book_context=book_context, corrective=corrective,
+        safety_note=safety_note,
     ).text
 
 
