@@ -24,6 +24,8 @@ _FORBIDDEN = (
     re.compile(r"^data/index/"),            # derived book index, rebuildable
     re.compile(r"\.(wav|m4a|mp3|flac)$"),   # audio
     re.compile(r"^inbox/"),                 # session digests
+    re.compile(r"^data/session_state\.json$"),   # Phase 3: last_session_at/last_topic + marker
+    re.compile(r"^data/\.session_state\.[^/]*\.tmp$"),  # atomic-write temp
 )
 
 

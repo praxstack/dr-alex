@@ -98,6 +98,9 @@ def _render_history(messages: list[Message]) -> str:
     return "\n".join(lines)
 
 
+_DEFAULT_INSTRUCTION = "Respond as Dr. Alex to Prax's most recent message. Warm, honest, brief."
+
+
 def build_prompt(
     messages: list[Message],
     tier: Tier,
@@ -105,6 +108,7 @@ def build_prompt(
     book_context: str | None = None,
     corrective: str | None = None,
     safety_note: str | None = None,
+    instruction: str | None = None,
 ) -> str:
     """The -p prompt: SAFETY_STATE + optional BOOK_CONTEXT + the conversation so far.
 
@@ -113,6 +117,11 @@ def build_prompt(
     a regeneration (e.g. the anti-dependency lint's one retry). ``safety_note`` is the
     crisis-questioning-discipline directive (G1): on an AMBER turn where the one-time
     safety check-in was already offered, it injects "already asked — do not re-ask".
+
+    ``instruction`` overrides the default "respond as Dr. Alex" closing directive. Phase 3
+    uses this so the session-end distillation and continuity-brief regeneration can route
+    through this SAME single model entrypoint (Directive 1) with their own task instruction
+    instead of spawning a second model call site.
     """
     amber = "\n" + _AMBER_GROUNDING_NOTE if tier is Tier.AMBER else ""
     if safety_note:
@@ -122,10 +131,10 @@ def build_prompt(
     if book_context:
         parts.extend([book_context, ""])
     parts.extend(["<CONVERSATION>", _render_history(messages), "</CONVERSATION>", ""])
-    instruction = "Respond as Dr. Alex to Prax's most recent message. Warm, honest, brief."
+    directive = instruction if instruction is not None else _DEFAULT_INSTRUCTION
     if corrective:
-        instruction += "\n\n" + corrective.strip()
-    parts.append(instruction)
+        directive += "\n\n" + corrective.strip()
+    parts.append(directive)
     return "\n".join(parts)
 
 
@@ -154,12 +163,18 @@ def complete(
     book_context: str | None = None,
     corrective: str | None = None,
     safety_note: str | None = None,
+    instruction: str | None = None,
 ) -> LLMResult:
     """Invoke the model for one turn. The ONLY function that spawns ``claude``.
 
     Requires a :class:`TriageResult`; a RED verdict is a programming error here (RED must
     short-circuit in the engine, before retrieval and before this call). Never raises on
     the user — every failure degrades to a calm fallback.
+
+    ``instruction`` lets non-conversational model tasks (Phase 3 session-end distillation,
+    continuity regeneration) reuse this single entrypoint with their own directive rather
+    than opening a second ``claude`` call site (Directive 1). They still pass a
+    ``TriageResult`` (GREEN — the material they summarize was already triaged per turn).
     """
     if triage.tier is Tier.RED:
         raise ValueError("complete() must never run on a RED turn; RED short-circuits earlier")
@@ -172,7 +187,7 @@ def complete(
 
     prompt = build_prompt(
         messages, triage.tier, book_context=book_context,
-        corrective=corrective, safety_note=safety_note,
+        corrective=corrective, safety_note=safety_note, instruction=instruction,
     )
     cmd = _base_cmd(system_prompt, "text")
     try:
