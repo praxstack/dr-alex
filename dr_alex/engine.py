@@ -18,12 +18,15 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
+from dr_alex import config as _config
 from dr_alex import continuity as _continuity
 from dr_alex import gates
 from dr_alex import llm as _llm
 from dr_alex import paths
+from dr_alex.session import SessionState
 from safety import crisis_card
-from safety.triage import Tier, triage
+from safety import crisis_questioning
+from safety.triage import Tier, red_category, triage
 
 _trace_log = logging.getLogger("dr_alex.trace")
 
@@ -138,15 +141,24 @@ def retrieve_context(text: str, *, k: int = DEFAULT_TOP_K, retriever=None):
 # ---------------------------------------------------------------------------
 
 
-def trace_turn(tier: Tier, retrieved, outcome: gates.GateOutcome) -> None:
-    """Emit a structured, body-free trace line for one turn."""
+def trace_turn(
+    tier: Tier, retrieved, outcome: gates.GateOutcome, safety_action: str = "none"
+) -> None:
+    """Emit a structured, body-free trace line for one turn.
+
+    ``safety_action`` records which crisis-questioning path ran ("probe-asked",
+    "probe-suppressed", "reask-blocked", or "none") — every turn logs which safety path
+    fired (graft-pack anti-pattern #2), never any message body.
+    """
     _trace_log.info(
-        "turn tier=%s chunks=%s dep=%s stripped=%s pages=%s",
+        "turn tier=%s chunks=%s dep=%s register=%s stripped=%s pages=%s safety=%s",
         tier.value,
         [c.chunk_id for c in retrieved],
         outcome.dependency_action,
+        outcome.register_action,
         ",".join(outcome.stripped_cites) or "-",
         outcome.page_stripped,
+        safety_action,
     )
 
 
@@ -155,8 +167,27 @@ def trace_turn(tier: Tier, retrieved, outcome: gates.GateOutcome) -> None:
 # ---------------------------------------------------------------------------
 
 
-def red_response_text() -> str:
-    """Plain-text RED reply: warm grounding + the hard-coded crisis card."""
+def _use_graded(user_text: str | None, style: str | None) -> bool:
+    """True only when the graded register is active AND the RED hit is *passive*.
+
+    Default path (``style is None`` -> config, which defaults to ``"full"``) is
+    byte-identical to before. Graded only ever softens PASSIVE ideation; explicit
+    ideation, means, plan, or harm-to-others always render the full card.
+    """
+    effective = style if style is not None else _config.crisis_card_style()
+    if effective != "graded" or not user_text:
+        return False
+    return red_category(user_text) == "passive"
+
+
+def red_response_text(user_text: str | None = None, *, style: str | None = None) -> str:
+    """Plain-text RED reply: warm grounding + the hard-coded crisis card.
+
+    In the default (``"full"``) register this is byte-identical to the original card.
+    In the graded register a *passive* RED hit gets the warmer variant instead.
+    """
+    if _use_graded(user_text, style):
+        return crisis_card.render_graded_text()
     return (
         crisis_card.GROUNDING_LINE
         + "\n\n"
@@ -166,8 +197,10 @@ def red_response_text() -> str:
     )
 
 
-def red_response_rich() -> str:
-    """Rich-markup RED reply for the TUI."""
+def red_response_rich(user_text: str | None = None, *, style: str | None = None) -> str:
+    """Rich-markup RED reply for the TUI (graded-aware, full by default)."""
+    if _use_graded(user_text, style):
+        return crisis_card.render_graded_rich()
     return (
         f"[b]{crisis_card.GROUNDING_LINE}[/b]\n\n"
         + crisis_card.render_rich()
@@ -179,6 +212,25 @@ def red_response_rich() -> str:
 # ---------------------------------------------------------------------------
 
 
+def safety_probe_note(session: SessionState | None, tier: Tier, user_text: str) -> str | None:
+    """The G1 crisis-questioning directive for this turn, or None.
+
+    The AMBER path is where the one-time safety check-in lives, but the "already asked —
+    do not re-ask" directive is injected on any *live* (non-RED) turn once the probe has
+    been capped, because a terse "no"/"stop" often triages GREEN — and that is exactly
+    the turn on which the previous system re-asked. Records a decline: if a probe was
+    already asked and Prax's current message reads as "no"/"stop", mark it declined so
+    the directive hardens and never re-fires.
+    """
+    if session is None or tier is Tier.RED:
+        return None
+    if session.safety_probe_asked and crisis_questioning.is_terminal_decline(user_text):
+        session.safety_probe_declined = True
+    return crisis_questioning.probe_directive(
+        asked=session.safety_probe_asked, declined=session.safety_probe_declined
+    )
+
+
 def respond_oneshot(
     user_text: str,
     *,
@@ -187,15 +239,27 @@ def respond_oneshot(
     now: datetime | None = None,
     timeout: int = _llm.DEFAULT_TIMEOUT,
     retriever=None,
+    session: SessionState | None = None,
 ) -> tuple[Tier, str]:
     """Run one full safety-first turn without the TUI. Returns (tier, reply_text).
 
     RED short-circuits: retrieval and the LLM are never reached. GREEN/AMBER retrieve
-    book context, call the model once, and run the deterministic output gates.
+    book context, call the model once, and run the deterministic output gates. When a
+    ``session`` is passed, the crisis-questioning discipline (G1) is enforced structurally:
+    once the one-time safety check-in has been offered, the AMBER prompt injects
+    "already asked — do not re-ask", and a deterministic backstop regenerates once if the
+    model asks anyway.
     """
+    if session is not None and recent_risk is None:
+        recent_risk = session.recent_risk
+
     tier = classify(user_text, recent_risk=recent_risk, now=now)  # STEP 0
+    if session is not None:
+        session.recent_risk = tier
     if tier is Tier.RED:
-        return tier, red_response_text()  # short-circuit before retrieval + model
+        # short-circuit before retrieval + model. red_response_text grades the register
+        # (full by default; passive-only warmer variant when graded is enabled).
+        return tier, red_response_text(user_text)
 
     retrieved, book_ctx = retrieve_context(user_text, retriever=retriever)  # STEP 1 + 2
 
@@ -203,16 +267,39 @@ def respond_oneshot(
     messages.append(_llm.Message(role="user", content=user_text))
     sp = system_prompt()
 
-    result = _llm.generate(
-        messages, tier, system_prompt=sp, book_context=book_ctx, timeout=timeout
-    )  # STEP 3
+    safety_note = safety_probe_note(session, tier, user_text)
 
-    def _regenerate(corrective: str) -> str:
-        return _llm.generate(
-            messages, tier, system_prompt=sp, book_context=book_ctx,
-            corrective=corrective, timeout=timeout,
-        ).text
+    def _gen(*, corrective: str | None = None, note: str | None = safety_note):
+        kwargs: dict = dict(system_prompt=sp, book_context=book_ctx, timeout=timeout)
+        if corrective is not None:
+            kwargs["corrective"] = corrective
+        if note is not None:
+            kwargs["safety_note"] = note
+        return _llm.generate(messages, tier, **kwargs)
 
-    outcome = gates.apply(result.text, retrieved, regenerate=_regenerate)  # STEP 4
-    trace_turn(tier, retrieved, outcome)  # STEP 5
+    result = _gen()  # STEP 3
+
+    # Deterministic re-ask backstop (G1): if the probe was already capped this session and
+    # the model asked anyway, regenerate ONCE with a hardened directive. A check either
+    # BLOCKS, ALERTS LOUDLY, or does not exist (anti-pattern #1) — this alerts via the
+    # trace and blocks the second ask with one more model pass.
+    safety_action = "none"
+    if session is not None and session.suppress_safety_probe:
+        safety_action = "probe-suppressed"
+        if crisis_questioning.is_safety_probe(result.text):
+            hardened = crisis_questioning.probe_directive(asked=True, declined=True)
+            regen = _gen(note=hardened)
+            if regen.text and regen.text.strip():
+                result = regen
+            safety_action = "reask-blocked"
+
+    outcome = gates.apply(result.text, retrieved, regenerate=lambda c: _gen(corrective=c).text)  # STEP 4
+
+    # Record whether the delivered reply asked the one-time safety question.
+    if session is not None and crisis_questioning.is_safety_probe(outcome.text):
+        session.safety_probe_asked = True
+        if safety_action == "none":
+            safety_action = "probe-asked"
+
+    trace_turn(tier, retrieved, outcome, safety_action)  # STEP 5
     return tier, outcome.text

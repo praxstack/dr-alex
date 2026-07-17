@@ -27,6 +27,7 @@ packages = ["dr_alex", "safety", "books"]
 [tool.hatch.build.targets.wheel.force-include]
 "persona" = "dr_alex/_bundled/persona"
 "data" = "dr_alex/_bundled/data"
+"config.toml" = "dr_alex/_bundled/config.toml"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

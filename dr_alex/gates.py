@@ -194,6 +194,103 @@ def enforce_boundaries(
 
 
 # ---------------------------------------------------------------------------
+# Register discipline lint (G7)
+# ---------------------------------------------------------------------------
+#
+# A warm conversation is plain prose. Handout-register formatting — markdown tables,
+# Obsidian-style callout blocks, and "— Dr. Alex" sign-offs — reads like a clinic
+# printout and competes with the human work (measured failure mode in the earlier
+# system). Same enforcement shape as the dependency lint: detect -> regenerate once ->
+# and, because these are pure formatting artifacts we CAN safely remove, a deterministic
+# strip is the final backstop (no content is lost, only the formatting).
+
+_TABLE_ROW = re.compile(r"^\s*\|.*\|\s*$")
+_TABLE_SEP = re.compile(r"^\s*\|?[ :|-]*-{3,}[ :|-]*\|[ :|-]*-{2,}[ :|-]*\|?\s*$")
+_CALLOUT_HEAD = re.compile(r"^(\s*)>\s*\[!\w+\][ \t]*(.*)$")
+_BLOCKQUOTE = re.compile(r"^(\s*)>[ \t]?(.*)$")
+_SIGNOFF = re.compile(r"^\s*[—–-]{1,2}\s*dr\.?\s*alex\.?\s*$", re.IGNORECASE)
+
+_REGISTER_CORRECTIVE = (
+    "IMPORTANT: your previous reply used handout-register formatting that does not belong "
+    "in a warm conversation. Rewrite it as plain prose. Remove ALL markdown tables, ALL "
+    "callout blocks (> [!NOTE] / > [!WARNING] / > [!TIP] etc.), and any '— Dr. Alex' "
+    "sign-off line. Keep every bit of the substance and warmth; drop the formatting."
+)
+
+
+def _is_table_line(line: str) -> bool:
+    return bool(_TABLE_SEP.match(line) or _TABLE_ROW.match(line))
+
+
+def has_register_violation(text: str) -> bool:
+    """True if the reply contains a table, a callout block, or a '— Dr. Alex' sign-off."""
+    lines = text.splitlines()
+    consecutive_rows = 0
+    for line in lines:
+        if _CALLOUT_HEAD.match(line) or _SIGNOFF.match(line) or _TABLE_SEP.match(line):
+            return True
+        if _TABLE_ROW.match(line):
+            consecutive_rows += 1
+            if consecutive_rows >= 2:  # header + row is a table even without a separator
+                return True
+        else:
+            consecutive_rows = 0
+    return False
+
+
+def strip_register(text: str) -> str:
+    """Deterministically remove tables / callouts / sign-offs, keeping the prose."""
+    lines = text.splitlines()
+    out: list[str] = []
+    i, n = 0, len(lines)
+    while i < n:
+        line = lines[i]
+        if _SIGNOFF.match(line):
+            i += 1
+            continue
+        if _is_table_line(line):
+            while i < n and _is_table_line(lines[i]):
+                i += 1
+            continue
+        head = _CALLOUT_HEAD.match(line)
+        if head:
+            remainder = head.group(2).strip()
+            if remainder:
+                out.append(remainder)
+            i += 1
+            # un-quote the callout's continuation lines back to plain prose
+            while i < n and _BLOCKQUOTE.match(lines[i]) and not _CALLOUT_HEAD.match(lines[i]):
+                body = _BLOCKQUOTE.match(lines[i]).group(2)  # type: ignore[union-attr]
+                if body.strip():
+                    out.append(body)
+                i += 1
+            continue
+        out.append(line)
+        i += 1
+    result = re.sub(r"\n{3,}", "\n\n", "\n".join(out))
+    return result.strip()
+
+
+@dataclass
+class RegisterResult:
+    text: str
+    action: str  # "clean" | "regenerated" | "stripped"
+
+
+def enforce_register(reply: str, *, regenerate: Callable[[str], str | None]) -> RegisterResult:
+    """Lint for handout-register formatting; regenerate once; else strip deterministically."""
+    if not has_register_violation(reply):
+        return RegisterResult(reply, "clean")
+
+    regen = regenerate(_REGISTER_CORRECTIVE)  # exactly one corrective regeneration
+    if regen and regen.strip() and not has_register_violation(regen):
+        return RegisterResult(regen.strip(), "regenerated")
+
+    base = regen if (regen and regen.strip()) else reply
+    return RegisterResult(strip_register(base), "stripped")
+
+
+# ---------------------------------------------------------------------------
 # Combined gate
 # ---------------------------------------------------------------------------
 
@@ -202,6 +299,7 @@ def enforce_boundaries(
 class GateOutcome:
     text: str
     dependency_action: str = "clean"
+    register_action: str = "clean"
     stripped_cites: list[str] = field(default_factory=list)
     page_stripped: bool = False
 
@@ -212,12 +310,18 @@ def apply(
     *,
     regenerate: Callable[[str], str | None],
 ) -> GateOutcome:
-    """Run both gates in order: anti-dependency lint, then citation validation."""
+    """Run the gates in order: anti-dependency lint, register lint, citation validation.
+
+    Dependency runs first (it can replace the whole reply), then the register lint (which
+    strips handout formatting), then citation validation on the surviving prose.
+    """
     boundary = enforce_boundaries(reply, regenerate=regenerate)
-    cites = validate_citations(boundary.text, retrieved)
+    register = enforce_register(boundary.text, regenerate=regenerate)
+    cites = validate_citations(register.text, retrieved)
     return GateOutcome(
         text=cites.text,
         dependency_action=boundary.action,
+        register_action=register.action,
         stripped_cites=cites.stripped,
         page_stripped=cites.page_stripped,
     )

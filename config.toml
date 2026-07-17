@@ -1,0 +1,25 @@
+# Dr. Alex Morgan — runtime configuration.
+#
+# This file is NOT clinical data; it is safe to commit. Values here are resolved at
+# runtime and every option fails safe to its most conservative default.
+
+[safety]
+# crisis_card_style controls how a RED (crisis) turn is answered.
+#
+#   "full"   — DEFAULT. Every RED turn renders the complete hard-coded India crisis
+#              card (Tele-MANAS, iCall, AASRA, Vandrevala, Emergency, Shreya). This is
+#              the current, verified behavior and must stay the default.
+#
+#   "graded" — For PASSIVE ideation only (a death-wish with no plan/means/intent, e.g.
+#              "I don't want to be here", "jeena nahi chahta"), render a warmer variant:
+#              validate the feeling, stay present, nudge reaching Shreya today, and keep
+#              one always-open line (Tele-MANAS 14416) instead of the full hotline dump.
+#              EXPLICIT ideation, means, plan, or harm-to-others ALWAYS get the full card.
+#              Both variants are 100% deterministic (no LLM).
+#
+# DO NOT switch to "graded" until Prax AND Shreya have reviewed and approved the warmer
+# wording (council open question Q2). Leaving passive-ideation hopelessness with a
+# gentler, present response — rather than a hotline dump that can read as panic and
+# pathologizing — is a clinical judgment that belongs to Prax's real therapist, not to
+# this build. Until then: "full".
+crisis_card_style = "full"
