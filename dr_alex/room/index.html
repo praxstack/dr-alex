@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#f4f2ee" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#16181f" media="(prefers-color-scheme: dark)" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="The Room" />
+  <title>The Room · Dr. Alex</title>
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <!-- Always-visible help header (council: the load-bearing "I need help right now") -->
+  <header class="topbar" role="banner">
+    <div class="brand">
+      <span class="brand-dot" aria-hidden="true"></span>
+      <span class="brand-name">The Room</span>
+      <span class="brand-sub">support between your sessions with Shreya</span>
+    </div>
+    <div class="topbar-actions">
+      <button id="help-now" class="help-now" type="button" aria-label="I need help right now">
+        I need help right now
+      </button>
+      <button id="theme-toggle" class="icon-btn" type="button" aria-label="Toggle light or dark theme">◐</button>
+    </div>
+  </header>
+
+  <!-- WebAuthn nag (D3 rider 3) — shown every open until a passkey is registered -->
+  <div id="passkey-nag" class="nag" role="status" hidden>
+    <span>Add a Face&nbsp;ID / passkey lock so a picked-up phone still can't open The Room.</span>
+    <button id="passkey-register" class="nag-btn" type="button">Set up passkey</button>
+    <button id="passkey-dismiss" class="nag-x" type="button" aria-label="Dismiss for now">×</button>
+  </div>
+
+  <!-- Pairing screen (shown until this device is paired) -->
+  <section id="pair-screen" class="pair" hidden>
+    <div class="pair-card">
+      <h1>Pair this device</h1>
+      <p>On your Mac, run <code>dr-alex pair</code> and enter the code it shows.</p>
+      <label for="pair-code" class="sr-only">Pairing code</label>
+      <input id="pair-code" class="pair-input" inputmode="text" autocomplete="one-time-code"
+             placeholder="XXXX-XXXX" maxlength="9" />
+      <button id="pair-submit" class="primary" type="button">Pair</button>
+      <p id="pair-error" class="pair-error" role="alert" hidden></p>
+    </div>
+  </section>
+
+  <!-- The one calm screen -->
+  <main id="room" class="room" hidden>
+    <div id="transcript" class="transcript" aria-live="polite" aria-label="Conversation with Dr. Alex"></div>
+
+    <div class="composer">
+      <div id="mood-row" class="mood-row" hidden>
+        <span id="mood-label" class="mood-label">How are you arriving? (1–10)</span>
+        <div id="mood-chips" class="mood-chips" role="group" aria-label="Mood 1 to 10"></div>
+        <button id="mood-skip" class="link-btn" type="button">skip</button>
+      </div>
+      <form id="composer-form" class="composer-form" autocomplete="off">
+        <button id="homework-btn" class="icon-btn" type="button" aria-label="Homework" title="Homework">☑</button>
+        <button id="shreya-btn" class="icon-btn" type="button" aria-label="Prep for Shreya" title="Prep for Shreya">✦</button>
+        <label for="input" class="sr-only">Type to talk to Dr. Alex</label>
+        <textarea id="input" class="input" rows="1" placeholder="Type to talk… plain words are enough." enterkeyhint="send"></textarea>
+        <button id="send" class="send" type="submit" aria-label="Send">→</button>
+      </form>
+    </div>
+  </main>
+
+  <!-- Homework drawer -->
+  <aside id="homework-drawer" class="drawer" hidden aria-label="Homework">
+    <div class="drawer-head">
+      <h2>Homework</h2>
+      <button id="homework-close" class="icon-btn" type="button" aria-label="Close homework">×</button>
+    </div>
+    <div id="homework-list" class="drawer-body"></div>
+  </aside>
+
+  <!-- Crisis overlay (renders from cached content — works offline) -->
+  <div id="crisis-overlay" class="crisis-overlay" hidden role="dialog" aria-modal="true" aria-label="Crisis resources">
+    <div class="crisis-card" id="crisis-card"></div>
+    <button id="crisis-close" class="crisis-close" type="button">I'm okay for now — go back</button>
+  </div>
+
+  <div id="scrim" class="scrim" hidden></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

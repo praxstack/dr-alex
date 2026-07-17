@@ -1,0 +1,19 @@
+{
+  "name": "The Room — Dr. Alex",
+  "short_name": "The Room",
+  "description": "A calm, private space to talk with Dr. Alex between your sessions with Shreya.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4f2ee",
+  "theme_color": "#7c6f9f",
+  "icons": [
+    {
+      "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNTYiIGhlaWdodD0iMjU2IiB2aWV3Qm94PSIwIDAgMjU2IDI1NiI+PHJlY3Qgd2lkdGg9IjI1NiIgaGVpZ2h0PSIyNTYiIHJ4PSI1NiIgZmlsbD0iI2VmZTlmNyIvPjxjaXJjbGUgY3g9IjEyOCIgY3k9IjEyMCIgcj0iNTgiIGZpbGw9IiM3YzZmOWYiLz48Y2lyY2xlIGN4PSIxMjgiIGN5PSIxMjAiIHI9IjMwIiBmaWxsPSIjZWZlOWY3Ii8+PHJlY3QgeD0iNzIiIHk9IjE5NiIgd2lkdGg9IjExMiIgaGVpZ2h0PSIxNCIgcng9IjciIGZpbGw9IiM2ZmFlOWYiLz48L3N2Zz4=",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

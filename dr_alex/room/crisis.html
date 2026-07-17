@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#f4f2ee" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#16181f" media="(prefers-color-scheme: dark)" />
+  <title>Help right now · The Room</title>
+  <!-- Fully self-contained + inline: this page is PRECACHED and must render OFFLINE with the
+       Mac asleep or off-network. It carries ZERO personal data and ZERO session state — only
+       the hard-coded India crisis resources (mirrors safety/crisis_card.py). -->
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f4f2ee; --surface: #fbfaf7; --text: #2f2b28; --muted: #6b6560;
+      --accent: #7c6f9f; --accent-soft: #ece7f5; --sage-soft: #e4efe9;
+      --crisis: #b5623a; --border: #e3ded5;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #16181f; --surface: #1e2029; --text: #e7e4de; --muted: #9a978f;
+        --accent: #b3a6df; --accent-soft: #2a2740; --sage-soft: #203029;
+        --crisis: #d9a86a; --border: #2c2f3a;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      line-height: 1.5; padding: 24px 18px calc(24px + env(safe-area-inset-bottom, 0px));
+      display: flex; flex-direction: column; align-items: center; gap: 18px;
+    }
+    .card {
+      width: 100%; max-width: 560px; background: var(--surface);
+      border: 1px solid color-mix(in srgb, var(--crisis) 30%, var(--border));
+      border-radius: 14px; padding: 22px;
+    }
+    h1 { font-size: 1.25rem; margin: 0 0 6px; color: var(--crisis); }
+    .lede { color: var(--muted); font-size: 0.92rem; margin: 0 0 16px; }
+    .line {
+      display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+      padding: 12px 0; border-top: 1px solid var(--border);
+    }
+    .line:first-of-type { border-top: none; }
+    .name { font-weight: 600; }
+    .note { display: block; font-size: 0.78rem; color: var(--muted); margin-top: 2px; }
+    .num {
+      flex: none; font-size: 1.05rem; font-weight: 700; color: var(--accent);
+      text-decoration: none; padding: 4px 10px; border-radius: 8px; background: var(--accent-soft);
+    }
+    .shreya { margin-top: 16px; padding: 14px; background: var(--sage-soft); border-radius: 10px; }
+    .shreya strong { display: block; margin-bottom: 6px; }
+    .draft { font-style: italic; font-size: 0.9rem; }
+    .breath { margin-top: 16px; font-size: 0.9rem; color: var(--muted); }
+    a.back {
+      color: var(--text); text-decoration: none; border: 1px solid var(--border);
+      background: var(--surface); padding: 12px 18px; border-radius: 999px; font-size: 0.92rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>You are not alone</h1>
+    <p class="lede">You reached out, and that matters. Let's slow down together for a moment — you don't have to carry this alone right now.</p>
+    <p>You don't have to be alone with this. Help is one call away.</p>
+
+    <div class="line"><div><span class="name">Tele-MANAS</span><span class="note">Govt of India, 24x7, free, many languages. (Also 1800-891-4416.)</span></div><a class="num" href="tel:14416">14416</a></div>
+    <div class="line"><div><span class="name">iCall (TISS)</span><span class="note">Mon-Sat, psychosocial counselling.</span></div><a class="num" href="tel:9152987821">9152987821</a></div>
+    <div class="line"><div><span class="name">AASRA</span><span class="note">24x7 emotional support.</span></div><a class="num" href="tel:9820466726">9820466726</a></div>
+    <div class="line"><div><span class="name">Vandrevala Foundation</span><span class="note">24x7 mental health helpline.</span></div><a class="num" href="tel:18602662345">1860-2662-345</a></div>
+    <div class="line"><div><span class="name">Emergency</span><span class="note">Immediate danger — police / ambulance.</span></div><a class="num" href="tel:112">112</a></div>
+
+    <div class="shreya">
+      <strong>Your therapist: Shreya — reach out to her.</strong>
+      <span>A message you could send her (you send it, not the app):</span>
+      <div class="draft">"Hi Shreya — I'm having a really hard time right now and could use your support. Can we talk soon?"</div>
+    </div>
+
+    <p class="breath">If you can: feet on the floor, one slow breath in for 4, out for 6. Just this one breath.</p>
+  </div>
+  <a class="back" href="/">I'm okay for now — go back</a>
+</body>
+</html>

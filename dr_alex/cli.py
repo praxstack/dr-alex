@@ -5,6 +5,10 @@ Modes
     dr-alex               full warm session (Textual TUI)
     dr-alex checkin       gentle nightly "how was today?" opener (TUI)
     dr-alex "some text"   one-shot: a single safety-first exchange, printed and done
+    dr-alex serve         run alexd (The Room) in the foreground — http://127.0.0.1:8787/
+    dr-alex pair          mint a one-time pairing code for the PWA (single-use, ≤5min)
+    dr-alex devices       list paired devices
+    dr-alex revoke <id>   revoke a paired device token
     dr-alex books ingest  (re)build the book index from the corpus
     dr-alex books status  show the corpus manifest + index state
     dr-alex backup        G19 durability: git bundle + encrypted state.db snapshot
@@ -92,6 +96,67 @@ def _books_command(args: list[str]) -> int:
     return 2
 
 
+def _serve_command(args: list[str]) -> int:
+    """`dr-alex serve` — run alexd (The Room) in the foreground. Loopback-only (D3 rider 1)."""
+    from dr_alex import alexd
+
+    host, port = alexd.HOST, alexd.PORT
+    for a in args:
+        if a.startswith("--port="):
+            try:
+                port = int(a.split("=", 1)[1])
+            except ValueError:
+                print(f"bad --port value: {a}", file=sys.stderr)
+                return 2
+        elif a.startswith("--host="):
+            host = a.split("=", 1)[1]
+    try:
+        alexd.serve(host=host, port=port)
+    except alexd.NonLoopbackBindRefused as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
+def _pair_command() -> int:
+    """`dr-alex pair` — mint a one-time pairing code the PWA redeems for a device token."""
+    from dr_alex import pairing
+
+    code = pairing.create_pairing_code()
+    print("Pairing code (valid ~5 minutes, single use):\n")
+    print(f"    {code}\n")
+    print("On the phone, open The Room and enter this code to pair the device.")
+    return 0
+
+
+def _devices_command() -> int:
+    """`dr-alex devices` — list paired devices."""
+    from dr_alex import pairing
+
+    devices = pairing.list_devices()
+    if not devices:
+        print("No devices paired yet. Run: dr-alex pair")
+        return 0
+    for d in devices:
+        state = "REVOKED" if d.revoked else "active"
+        last = d.last_used_ts or "never"
+        print(f"  {d.id}  [{state}]  {d.label!r}  last-used: {last}")
+    return 0
+
+
+def _revoke_command(args: list[str]) -> int:
+    """`dr-alex revoke <device_id>` — revoke a paired device token."""
+    from dr_alex import pairing
+
+    if not args:
+        print("Usage: dr-alex revoke <device_id>  (see: dr-alex devices)", file=sys.stderr)
+        return 2
+    ok = pairing.revoke_device(args[0])
+    print("revoked." if ok else "no matching active device (already revoked, or bad id).",
+          file=sys.stderr if not ok else sys.stdout)
+    return 0 if ok else 1
+
+
 def _print_oneshot(text: str) -> int:
     # Imported lazily so `--card` / `--version` don't pull in the model path.
     from dr_alex import engine
@@ -122,6 +187,18 @@ def main(argv: list[str] | None = None) -> int:
 
         print(crisis_card.render_text())
         return 0
+
+    if args and args[0] == "serve":
+        return _serve_command(args[1:])
+
+    if args and args[0] == "pair":
+        return _pair_command()
+
+    if args and args[0] == "devices":
+        return _devices_command()
+
+    if args and args[0] == "revoke":
+        return _revoke_command(args[1:])
 
     if args and args[0] == "books":
         return _books_command(args[1:])

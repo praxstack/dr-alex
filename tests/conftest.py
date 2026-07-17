@@ -54,3 +54,6 @@ def _memory_off_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setenv("DR_ALEX_MEMORY_OFF", "1")
     # Phase 4: every test's state.db lives in a throwaway file, never the real data/state.db.
     monkeypatch.setenv("DR_ALEX_STATE_DB", str(tmp_path / "state.db"))
+    # Phase 5: every test's device-pairing db is a throwaway file, never the real
+    # data/pairing.db (auth data must never leak into the source tree during a test run).
+    monkeypatch.setenv("DR_ALEX_PAIRING_DB", str(tmp_path / "pairing.db"))
