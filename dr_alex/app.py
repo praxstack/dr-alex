@@ -17,7 +17,7 @@ from textual.containers import Center, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Input, Static
 
-from dr_alex import engine, llm
+from dr_alex import engine, gates, llm
 from safety import crisis_card
 from safety.triage import Tier
 
@@ -246,21 +246,34 @@ class DrAlexApp(App[None]):
             )
             return
 
-        # GREEN / AMBER -> call the model in a worker (streams into a widget).
+        # GREEN / AMBER -> retrieve, call the model, and gate the reply in a worker.
         self._history.append(llm.Message(role="user", content=text))
         widget = self._add_message("alex", "[dim]…[/dim]")
-        self._stream_reply(tier, widget)
+        self._reply(tier, widget, text)
 
     @work(thread=True, exclusive=True, group="llm")
-    def _stream_reply(self, tier: Tier, widget: Static) -> None:
+    def _reply(self, tier: Tier, widget: Static, user_text: str) -> None:
         messages = list(self._history)
-        pieces: list[str] = []
-        for chunk in llm.stream(messages, tier, system_prompt=self._system_prompt):
-            pieces.append(chunk)
-            current = "".join(pieces)
-            self.call_from_thread(widget.update, "[b]Alex[/b]\n" + escape(current))
-            self.call_from_thread(self._scroll_chat)
-        reply = "".join(pieces).strip() or "(no response)"
+        # STEP 1 + 2: book retrieval (after triage) + labeled context assembly.
+        retrieved, book_ctx = engine.retrieve_context(user_text)
+        # STEP 3: single model entrypoint. Gates need the whole reply, so buffer it.
+        raw = "".join(
+            llm.stream(messages, tier, system_prompt=self._system_prompt, book_context=book_ctx)
+        ).strip() or "(no response)"
+
+        def _regenerate(corrective: str) -> str:
+            return "".join(
+                llm.stream(
+                    messages, tier, system_prompt=self._system_prompt,
+                    book_context=book_ctx, corrective=corrective,
+                )
+            ).strip()
+
+        # STEP 4: deterministic output gates before anything reaches the screen.
+        outcome = gates.apply(raw, retrieved, regenerate=_regenerate)
+        engine.trace_turn(tier, retrieved, outcome)  # STEP 5
+        reply = outcome.text or "(no response)"
+
         self._history.append(llm.Message(role="assistant", content=reply))
         self.call_from_thread(widget.update, "[b]Alex[/b]\n" + escape(reply))
         self.call_from_thread(self._scroll_chat)
