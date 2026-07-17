@@ -94,6 +94,14 @@ _RED_ALWAYS = [
     r"don'?t want to exist",
     r"don'?t want to live anymore",
     r"don'?t want to live any ?more",
+    # Passive death-wish "don't want to live" WITHOUT a circumstantial object.
+    # "don't want to live" / "...live." -> RED (passive ideation; the documented
+    # Fable-5 gap). But "...live like this" stays AMBER, and locational/relational
+    # continuations ("live in <city>", "live with my parents", "live here") are
+    # HOUSING/circumstance despair, NOT self-harm — they must NOT fire (this is the
+    # exact circumstance-despair over-firing class the crisis-questioning discipline
+    # fixes). The negative lookahead encodes that clinical distinction.
+    r"don'?t (?:want to|wanna|wana) live\b(?!\s+(?:like|in|with|here|there|near|at|around|close|next|by|among))",
     r"don'?t want to be around anymore",
     r"don'?t want to wake up",
     r"do not want to wake up",
@@ -125,6 +133,8 @@ _RED_CORE = [
     r"want (?:to|it all to|it to) (?:end|be over|stop)",
     r"just want it to (?:end|be over|stop)",
     r"(?:want|going|need|ready|about) to end (?:it|this|my life|myself)",
+    r"(?:have|got|thought of|working on|made) a plan to (?:end|kill|hurt|harm)",
+    r"plan to (?:end (?:it|this|my life|myself|things|it all)|kill myself)",
     r"take my (?:own )?life",
     r"want to die",
     r"wanna die",
@@ -194,6 +204,69 @@ _SLANG_RED = [
     r"\bunaliv",  # unalive / unaliving
 ]
 
+# ---------------------------------------------------------------------------
+# Hinglish / code-mixed crisis lexicon (romanized Hindi-English)
+# ---------------------------------------------------------------------------
+#
+# Prax and many Indian users switch to romanized Hindi under acute distress, and a
+# purely-English lexicon would silently miss it (a false-negative — the one error the
+# bias-to-caution design does NOT accept). These are written from clinical/linguistic
+# knowledge, NOT mined from anyone's logs.
+#
+# Word-boundary discipline is load-bearing: romanized fragments live *inside* innocent
+# English words ("mar" ⊂ smart/market/summary, "jee" ⊂ jeans, "jaan" is also a term of
+# endearment, "khatam" innocently means "finished/over"). Every pattern is \b-anchored
+# and requires a volitional / desiderative / reflexive construction, so hyperbole
+# ("padh padh ke mar jaunga" = I'll die from studying) and innocent usage
+# ("movie khatam ho gayi" = the movie ended) do NOT fire. Checked over the base
+# normalized string only (never the leet/collapsed passes, which would defeat \b).
+#
+# EXPLICIT — active/volitional self-harm intent (kill/die-by-choice, reflexive, means).
+_RED_HINGLISH_EXPLICIT = [
+    r"\bmarna chahta\b",                       # want to die/kill (self)
+    r"\bmarna chahti\b",
+    r"\bmarne ka (?:mann|man|dil) (?:kar|ho|hai)",  # feel like dying
+    r"\bmarne ka (?:mann|man|dil) nahi kar",   # (still a death-focus construction)
+    r"\bmar jana chahta\b",
+    r"\bmar jana chahti\b",
+    r"\bmar jaana chahta\b",
+    r"\bmar jaana chahti\b",
+    r"(?<!nahi )\bmarna hai\b",                # "mujhe marna hai" (want/have to die)
+    r"\bkhud ?kushi\b",                        # khudkushi = suicide
+    r"\bkhud ?khushi karne\b",
+    r"\baatmahatya\b",                         # aatmahatya = suicide
+    r"\batmahatya\b",
+    r"\b(?:khud ko|apne aap ko|apne ko|khudko) (?:khatam|maar|maar|mar)\b",  # end/kill myself
+    r"\b(?:khud ko|apne aap ko|apne ko|khudko) khatam kar",
+    r"\bjaan de (?:dunga|dungi|du|dena|deta|deti)\b",  # give up / take my life
+    r"\bapni jaan (?:le|de)\b",
+    r"\bjaan dena hai\b",
+    r"\bmar (?:jana|jaana) behtar\b",          # better to be dead
+    r"\bmarna behtar\b",
+    r"\bmar (?:jau|jaun|jaunga|jaungi) to (?:accha|acha|behtar|theek)\b",
+    r"\bwant to marna\b",                      # mixed register
+    r"\bwant to mar jau\b",
+    r"\bkill kar (?:lunga|dunga) khud\b",
+]
+
+# PASSIVE — death-wish / not-wanting-to-live, without active method (jeena/zinda focus).
+_RED_HINGLISH_PASSIVE = [
+    r"\bjeena nahi chahta\b",                  # don't want to live
+    r"\bjeena nahi chahti\b",
+    r"\bjeena nahi hai\b",
+    r"\bnahi jeena\b",                         # "mujhe nahi jeena" (I don't want to live)
+    r"\bjeene ka (?:mann|man|dil) nahi\b",     # no will to live
+    r"\bjee nahi (?:sakta|sakti|paunga|paungi)\b",
+    r"\bab (?:aur )?nahi jee\b",               # can't live anymore
+    r"\bzinda nahi rehna\b",                   # don't want to stay alive
+    r"\bzinda nahi rehna chah",
+    r"\bzinda rehne ka (?:mann|man|dil) nahi\b",
+    r"\bzinda nahi rehna chahta\b",
+    r"\bab (?:aur )?jeena nahi\b",
+]
+
+_RED_HINGLISH = _RED_HINGLISH_EXPLICIT + _RED_HINGLISH_PASSIVE
+
 # SAFETY_DENIAL: negator + short gap + risk word. If such a span *contains* a
 # RED_CORE match, that RED_CORE hit is treated as denied (e.g. "I would never
 # kill myself", "no thoughts of self-harm", "not suicidal"). The short gap (<=16
@@ -216,6 +289,38 @@ _RED_ALWAYS_RE = _compile(_RED_ALWAYS)
 _RED_CORE_RE = _compile(_RED_CORE)
 _RED_HARM_OTHERS_RE = _compile(_RED_HARM_OTHERS)
 _SLANG_RED_RE = _compile(_SLANG_RED)
+_RED_HINGLISH_EXPLICIT_RE = _compile(_RED_HINGLISH_EXPLICIT)
+_RED_HINGLISH_PASSIVE_RE = _compile(_RED_HINGLISH_PASSIVE)
+_RED_HINGLISH_RE = _compile(_RED_HINGLISH)
+
+# Passive death-wish subset of _RED_ALWAYS (English), used only to grade a RED turn as
+# "passive" vs "explicit" for the graded crisis register (G4). NOT a separate detector —
+# every phrase here is already RED via _RED_ALWAYS; this list just tags the *kind*.
+_RED_PASSIVE_EN = _compile([
+    r"don'?t want to be here",
+    r"don'?t (?:wanna|wana) be here",
+    r"don'?t want to be alive",
+    r"don'?t (?:wanna|wana) be alive",
+    r"(?:wanna|wana) be dead",
+    r"don'?t want to exist",
+    r"don'?t want to live",
+    r"don'?t want to be around",
+    r"don'?t want to wake up",
+    r"do not want to wake up",
+    r"(?:hope|wish) i (?:don'?t|do not|never|wouldn'?t|would not) wake up",
+    r"(?:go to sleep|fall asleep) and (?:never|not) wake up",
+    r"wish i (?:was|were|wasn'?t|weren'?t) (?:dead|never born|here)",
+    r"wish i (?:had )?never (?:been )?born",
+    r"wish i (?:hadn'?t|had not) been born",
+    r"wish i (?:could )?(?:just )?disappear forever",
+    r"better off dead",
+    r"(?:i'?d|i would) be better off dead",
+    r"better off without me",
+    r"(?:everyone|everybody|they|the world|my family) (?:would|will|'?d) be better off without me",
+    r"no reason to (?:live|go on|be here)",
+    r"nothing (?:left )?to live for",
+    r"tired of (?:being alive|living)",
+])
 
 
 def _slang_hit(norm: str) -> bool:
@@ -249,6 +354,14 @@ def _red_hit(norm: str) -> bool:
     #    rewrite digits (5->s), which would defeat the "5 kms" (kilometres) guard.
     if _slang_hit(norm):
         return True
+
+    # 2b. Hinglish / code-mixed crisis lexicon. \b-anchored and checked over the BASE
+    #     normalized string only (the leet/collapsed passes strip separators and would
+    #     defeat the word boundaries that keep romanized fragments from firing inside
+    #     innocent English words). Never suppressed — same bias-to-caution as RED_ALWAYS.
+    for rx in _RED_HINGLISH_RE:
+        if rx.search(norm):
+            return True
 
     # 3. RED_CORE, with denial suppression, over each variant.
     for v in variants:
@@ -371,12 +484,34 @@ _MILD_AMBER = [
     r"\bmiserable\b",
 ]
 
+# Hinglish acute-distress markers (romanized). Each is a STRONG marker: a single hit
+# -> AMBER, mirroring the English strong-marker tier. \b-anchored; each requires a
+# distress phrase (not a bare word) so innocent usage ("thoda pareshan" = a little
+# worried, "kaam khatam" = work finished) does not cluster up.
+_STRONG_AMBER_HINGLISH = [
+    r"\bkoi (?:ummeed|umeed|umid) nahi\b",     # no hope
+    r"\bkuch (?:bhi )?nahi bacha\b",           # nothing left
+    r"\bbard(?:aa|a)sht nahi ho raha\b",       # can't bear it
+    r"\bbard(?:aa|a)sht nahi hoti\b",
+    r"\bhaar (?:gaya|gayi|maan) (?:gaya|gayi)?\s?(?:hun|hoon)?\b",  # I've given up
+    r"\bhimmat (?:toot|tut) (?:gayi|gaya)\b",  # spirit broken
+    r"\b(?:bohot|bahut) (?:pareshan|dukhi|udaas|akela|akeli)\b",   # very distressed/alone
+    r"\btut (?:gaya|gayi|chuka|chuki) (?:hun|hoon)\b",             # I'm broken
+    r"\bbekaar hun\b",                         # I'm worthless
+    r"\bbekar (?:hun|hoon)\b",
+    r"\bkuch samajh nahi aa raha\b",           # completely lost/overwhelmed
+    r"\brona (?:aa raha|nahi ruk)",            # can't stop crying
+]
+
 _STRONG_AMBER_RE = _compile(_STRONG_AMBER)
+_STRONG_AMBER_HINGLISH_RE = _compile(_STRONG_AMBER_HINGLISH)
 _MILD_AMBER_RE = _compile(_MILD_AMBER)
 
 
 def _strong_amber_hit(norm: str) -> bool:
-    return any(rx.search(norm) for rx in _STRONG_AMBER_RE)
+    if any(rx.search(norm) for rx in _STRONG_AMBER_RE):
+        return True
+    return any(rx.search(norm) for rx in _STRONG_AMBER_HINGLISH_RE)
 
 
 def _mild_amber_count(norm: str) -> int:
@@ -460,3 +595,47 @@ def triage(text: str, recent_risk: object = None, now: datetime | None = None) -
 def assess(text: str, recent_risk: object = None, now: datetime | None = None) -> TriageResult:
     """``triage`` wrapped in the :class:`TriageResult` the LLM entrypoint requires."""
     return TriageResult(tier=triage(text, recent_risk=recent_risk, now=now), night=_is_night(now))
+
+
+def red_category(text: str) -> str:
+    """Grade a RED message as ``"explicit"`` or ``"passive"`` — used ONLY by the graded
+    crisis register (G4). It does not change triage: the message is already RED. It only
+    distinguishes active/volitional ideation, means, plan, or harm-to-others ("explicit")
+    from a passive death-wish with no method or intent ("passive", e.g. "don't want to be
+    here", "jeena nahi chahta"). Explicit is the default when a hit can't be graded, so
+    the full crisis card (the safest surface) is what an ambiguous RED gets.
+    """
+    norm = _normalize(text)
+    variants = _variants(norm)
+
+    # Explicit wins if ANY active/means/plan/harm pattern matches.
+    for v in variants:
+        for rx in _RED_CORE_RE:
+            for m in rx.finditer(v):
+                # honor denial suppression, consistent with _red_hit
+                if not any(ds <= m.start() and de >= m.end()
+                           for ds, de in (mm.span() for mm in _DENIAL_RE.finditer(v))):
+                    return "explicit"
+        if any(rx.search(v) for rx in _RED_HARM_OTHERS_RE):
+            return "explicit"
+    if _slang_hit(norm):
+        return "explicit"
+    if any(rx.search(norm) for rx in _RED_HINGLISH_EXPLICIT_RE):
+        return "explicit"
+    if not _DENIAL_RE.search(norm):
+        collapsed = _collapsed(norm)
+        _explicit_collapsed = {t for t in _COLLAPSED_RED
+                               if t not in {"dontwanttobehere", "dontwanttobealive",
+                                            "dontwanttoliveanymore", "betteroffdead",
+                                            "wishiwasdead"}}
+        if any(t in collapsed for t in _explicit_collapsed):
+            return "explicit"
+
+    # Passive death-wish (English or Hinglish) with no active component above.
+    if any(rx.search(norm) for rx in _RED_PASSIVE_EN):
+        return "passive"
+    if any(rx.search(norm) for rx in _RED_HINGLISH_PASSIVE_RE):
+        return "passive"
+
+    # RED but couldn't be graded -> treat as explicit (full card, the safest surface).
+    return "explicit"
