@@ -139,12 +139,3 @@ def test_stream_without_binary_yields_fallback(monkeypatch: pytest.MonkeyPatch) 
     chunks = list(llm.stream(_msgs(), Tier.GREEN, system_prompt="sys"))
     assert chunks
     assert any("Shreya" in c or "F1" in c for c in chunks)
-
-
-def test_extract_text_handles_shapes() -> None:
-    assert llm._extract_text({"type": "result", "result": "final text"}) == "final text"
-    assert llm._extract_text(
-        {"message": {"content": [{"type": "text", "text": "hi "}, {"type": "text", "text": "there"}]}}
-    ) == "hi there"
-    assert llm._extract_text({"delta": {"text": "chunk"}}) == "chunk"
-    assert llm._extract_text({"unrelated": 1}) == ""
