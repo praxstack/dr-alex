@@ -427,6 +427,14 @@ def run_turn(
 
     outcome = gates.apply(result.text, retrieved, regenerate=lambda c: _gen(corrective=c).text)  # STEP 4
 
+    # D3 defense-in-depth: the gate-corrective regeneration inside ``gates.apply``
+    # (dependency/register lint replacing the reply) can itself surface a fresh safety probe.
+    # If the probe was already capped this session, strip it here too so NO code path — not the
+    # re-ask regen above, not the gate regen — can ship a second safety probe. Never a 2nd ask.
+    if session is not None and session.suppress_safety_probe and crisis_questioning.is_safety_probe(outcome.text):
+        outcome.text = crisis_questioning.strip_safety_probe(outcome.text)
+        safety_action = "reask-blocked"
+
     # Record whether the delivered reply asked the one-time safety question.
     if session is not None and crisis_questioning.is_safety_probe(outcome.text):
         session.safety_probe_asked = True

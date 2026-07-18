@@ -162,3 +162,38 @@ def test_reask_backstop_blocks_when_regen_still_probes(monkeypatch) -> None:
     assert not crisis_questioning.is_safety_probe(out.text)  # no second ask ships
     assert out.safety_action == "reask-blocked"
     assert out.text.strip()  # never an empty reply
+
+
+def test_gate_regen_probe_blocked_when_probe_capped(monkeypatch) -> None:
+    """D3 defense-in-depth: the probe is capped this session, the initial reply does NOT
+    probe (so the re-ask backstop stays quiet), but the GATE-corrective regeneration inside
+    ``gates.apply`` (dependency lint) returns a probing reply. No second ask may ship — the
+    delivered text must be deterministically stripped of the probe."""
+    from dr_alex.session import SessionState
+
+    retr = _FakeRetriever([])
+    calls = {"n": 0}
+
+    def fake_generate(messages, tier, *, corrective=None, **kwargs):
+        calls["n"] += 1
+        if corrective is not None:  # the GATE-corrective regeneration probes
+            return llm.LLMResult(
+                ok=True,
+                text="Are you having thoughts of hurting yourself right now?",
+                tier=tier,
+            )
+        # Initial reply: NOT a probe, but trips the anti-dependency gate.
+        return llm.LLMResult(ok=True, text="I'm always here for you, I'm all you need.", tier=tier)
+
+    monkeypatch.setattr(llm, "generate", fake_generate)
+
+    session = SessionState(safety_probe_asked=True)  # probe already capped this session
+    out = engine.run_turn(
+        "i only want to talk to you", retriever=retr, session=session,
+    )
+
+    from safety import crisis_questioning
+    assert calls["n"] == 2  # original + exactly one gate-corrective regeneration
+    assert not crisis_questioning.is_safety_probe(out.text)  # no second ask ships
+    assert out.safety_action == "reask-blocked"
+    assert out.text.strip()  # never an empty reply
