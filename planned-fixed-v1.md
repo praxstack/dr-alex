@@ -165,3 +165,6 @@
 
 ## Coverage gaps (audit blind spots)
 - Process gaps: (1) No auditor RAN the 566-test suite or measured line/branch coverage — every finding is from code reading, not an observed failure. (2) No dependency CVE scan / pip-audit was run (no network) — httpx 0.28.1, fastapi 0.139.2/starlette 1.3.1, uvicorn, cryptography 49.0.0, keyring 25.7.0, PyMuPDF 1.28.0 are unchecked for advisories (versions are pinned/current per uv.lock, but not vul
+
+---
+**Review sign-off (2026-07-18):** all 19 findings implemented; independent code-review of b0a58ee..HEAD passed — every safety invariant HOLDS (triage-first, single entrypoint, golden gate w/ D7 specificity, D3 block-not-hope, D4 citation-safe neutralization, D5 idempotent fan-out, D17 v0-upgrade covered, D19 CSP verified vs real inline usage). One review-fix commit (2024fa1). Suite 592 passed.
