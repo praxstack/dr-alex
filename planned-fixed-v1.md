@@ -15,7 +15,7 @@
 | 3 | DONE | high/S/low | Re-ask backstop is regenerate-once-and-hope, not block; the still-probes branch is untested and mislabeled 'reask-blocked' | `dr_alex/engine.py:402` |
 | 4 | DONE | high/M/low | Prompt-injection defense on the two most-trusted context channels is weak (no fence neutralization + asymmetric framing) AND has zero adversarial test | `dr_alex/memory.py:160 (+ engine.py:143, llm.py:80)` |
 | 5 | DONE | high/M/med | Session-end fan-out silently drops a session's durable memory on a transient scrub/remember failure (marker cleared unconditionally, scrub_failed swallowed) | `dr_alex/fanout.py:133 (+ fanout.py:234, app.py:659-667)` |
-| 6 | TODO | high/S/low | Crisis-fragment debounce bypass in alexd has no endpoint-level test; the DebounceBuffer test uses a fake crisis predicate | `dr_alex/alexd.py:335` |
+| 6 | DONE | high/S/low | Crisis-fragment debounce bypass in alexd has no endpoint-level test; the DebounceBuffer test uses a fake crisis predicate | `dr_alex/alexd.py:335` |
 | 7 | TODO | high/S/low | Golden crisis corpus's 71 non-RED cases are loaded but never asserted — only RED recall is gated, so false-positive regressions pass silently | `dr_alex/improve.py:210` |
 | 8 | TODO | high/M/med | Self-improve 'frozen invariants' gate is substring-presence only, so a behavior-changing persona edit that keeps every marker passes and is committed live | `dr_alex/improve.py:171` |
 | 9 | TODO | high/S/low | Per-turn telemetry recomputes system_prompt() from disk instead of reusing the built prompt — and hashes the WRONG prompt on the alexd memory-augmented path | `dr_alex/engine.py:297` |
@@ -63,7 +63,7 @@
 - **Fix:** Do not clear unfinalized in _finalize_state when any channel step is incomplete (inbox_written False, unwritten durable indices, or scrub_failed True) — keep the marker so recover_if_needed replays next start; and surface scrub_failed/remember failures loudly (log/telemetry) instead of letting app.py discard them.
 
 ### #6 — Crisis-fragment debounce bypass in alexd has no endpoint-level test; the DebounceBuffer test uses a fake crisis predicate
-- **Status:** TODO
+- **Status:** DONE
 - **Location:** `dr_alex/alexd.py:335`  ·  **Category:** test-coverage  ·  conf high / effort S / fix-risk low
 - **Impact:** The /turn handler buffers fragments unless crisis is detected (`if is_fragment and not bypass:`, bypass from real crisis_prescreen.should_bypass_debounce). No alexd test sends a RED text with fragment
 - **Fix:** Add an alexd integration test posting a RED text with fragment:True, asserting the response immediately streams the crisis card (meta crisis=true, contains 14416/Shreya) with zero buffering and no model call — exercising the real crisis_prescreen wiring.
