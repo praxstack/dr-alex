@@ -67,6 +67,9 @@ addopts = "-q"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# The lint gate covers the source packages; test files keep their freedom (fixtures use
+# non-PEP8 names, dict() call style, etc.). Run `uv run ruff check` from the repo root.
+include = ["dr_alex/**/*.py", "safety/**/*.py", "books/**/*.py"]
 extend-exclude = [".venv", "dr_alex/_bundled"]
 
 [tool.ruff.lint]
