@@ -23,7 +23,7 @@
 | 11 | DONE | high/S/low | Operational env vars and four privacy kill-switches are undocumented (no central reference, no .env.example) | `dr_alex/config.py:32` |
 | 12 | DONE | high/S/low | Dead code: llm._extract_text is unused by production and its docstring misdescribes how alexd streams | `dr_alex/llm.py:260` |
 | 13 | DONE | high/S/low | Time/IST handling duplicated across ~6 modules with two separate IST constants | `dr_alex/reorient.py:24 (+ statedb.py:35)` |
-| 14 | TODO | high/M/low | No top-level README / getting-started for the main application | `dr_alex/cli.py:1` |
+| 14 | DONE | high/M/low | No top-level README / getting-started for the main application | `dr_alex/cli.py:1` |
 | 15 | TODO | med/S/low | No dev/agent-facing AGENTS.md or CLAUDE.md in a repo built and self-modified by agents | `dr_alex/improve.py:35` |
 | 16 | TODO | high/S/med | No linter, formatter, or type-checker for a safety-critical codebase | `pyproject.toml:53` |
 | 17 | TODO | high/S/med | statedb._connect re-applies the full 8-table schema on every single DB operation | `dr_alex/statedb.py:187` |
@@ -111,7 +111,7 @@
 - **Fix:** Introduce one dr_alex/timeutil.py exporting IST, now_utc, now_iso, to_ist; have statedb/reorient/export/widgets/pairing/app import from it; delete the duplicate constant and per-module helpers.
 
 ### #14 — No top-level README / getting-started for the main application
-- **Status:** TODO
+- **Status:** DONE
 - **Location:** `dr_alex/cli.py:1`  ·  **Category:** dx-docs  ·  conf high / effort M / fix-risk low
 - **Impact:** The only README documents the Mac-asleep FALLBACK kit, not the app; the full command map lives only in the cli.py module docstring reachable via `dr-alex --help`. A new operator or inheriting agent ha
 - **Fix:** Add a thin top-level README.md: one-command install/run, a CLI-subcommand table (mirroring cli.py:1-29), the Keychain secret-setup block, how to enable the disabled launchd jobs, the Tailscale-only phone path, and a pointer to the mobile fallback kit — linking to authoritative inline docs rather than duplicating.
