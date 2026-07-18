@@ -131,13 +131,11 @@ def collect(
             data.red += 1
             data.risk_events.append((ts, tier))
 
-    # Session count in-window (via the snapshot, which is already window-scoped).
-    window_days = max(1, len(days))
-    snap = statedb.window_snapshot(now=now, window_days=window_days, path=state_path)
-    data.sessions = len(snap.sessions)
-    if snap.late_night is not None:
-        data.late_night_count = snap.late_night.late_night_count
-        data.late_night_flagged = snap.late_night.flagged
+    # Session count scoped to the requested [from, to] range (not a now-anchored window).
+    sessions = statedb.sessions_between(from_iso, to_iso, path=state_path)
+    data.sessions = len(sessions)
+    data.late_night_count = sum(1 for _id, hour in sessions if hour in statedb.NIGHT_HOURS_IST)
+    data.late_night_flagged = data.late_night_count >= statedb.LATE_NIGHT_THRESHOLD
 
     all_hw = statedb.all_homework(path=state_path)
     data.homework_open = sum(1 for h in all_hw if h.status == "open")

@@ -967,6 +967,25 @@ def turn_tiers_between(from_ts: str, to_ts: str, *, path: Path | None = None) ->
         return []
 
 
+def sessions_between(from_ts: str, to_ts: str, *, path: Path | None = None) -> list[tuple[str, int]]:
+    """(id, started_hour_ist) for sessions started within ``from_ts <= started_ts <= to_ts``.
+
+    Unlike :func:`window_snapshot` (a trailing now-anchored window), this honours an explicit
+    upper bound so a date-ranged export counts only sessions inside the requested range.
+    """
+    if not telemetry_enabled():
+        return []
+    try:
+        with _connect(path) as conn:
+            return conn.execute(
+                "SELECT id, started_hour_ist FROM sessions "
+                "WHERE started_ts >= ? AND started_ts <= ? ORDER BY started_ts",
+                (from_ts, to_ts),
+            ).fetchall()
+    except sqlite3.Error:
+        return []
+
+
 def _session_moods_conn(conn: sqlite3.Connection, session_id: str) -> tuple[int | None, int | None]:
     rows = conn.execute(
         "SELECT phase, mood FROM mood_events WHERE session_id=? ORDER BY ts", (session_id,)

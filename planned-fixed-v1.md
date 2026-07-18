@@ -11,7 +11,7 @@
 | # | Status | Sev(conf/effort/risk) | Finding | Location |
 |---|---|---|---|---|
 | 1 | DONE | high/M/med | TUI re-implements the safety turn pipeline instead of calling run_turn; the copies have drifted so phone-side RED (crisis) turns are never persisted | `dr_alex/app.py:584 (+ engine.py:369, alexd.py:159)` |
-| 2 | TODO | high/S/low | Date-ranged export miscounts sessions + late-night signal: uses a now-anchored window, ignoring from/to | `dr_alex/export.py:136 (+ statedb.py:865)` |
+| 2 | DONE | high/S/low | Date-ranged export miscounts sessions + late-night signal: uses a now-anchored window, ignoring from/to | `dr_alex/export.py:136 (+ statedb.py:865)` |
 | 3 | DONE | high/S/low | Re-ask backstop is regenerate-once-and-hope, not block; the still-probes branch is untested and mislabeled 'reask-blocked' | `dr_alex/engine.py:402` |
 | 4 | DONE | high/M/low | Prompt-injection defense on the two most-trusted context channels is weak (no fence neutralization + asymmetric framing) AND has zero adversarial test | `dr_alex/memory.py:160 (+ engine.py:143, llm.py:80)` |
 | 5 | DONE | high/M/med | Session-end fan-out silently drops a session's durable memory on a transient scrub/remember failure (marker cleared unconditionally, scrub_failed swallowed) | `dr_alex/fanout.py:133 (+ fanout.py:234, app.py:659-667)` |
@@ -39,7 +39,7 @@
 - **Fix:** Collapse the TUI onto engine.run_turn via an optional streaming/render hook (llm.stream then becomes dead). FIRST make a product call on the RED-persistence divergence — decide whether run_turn SHOULD persist RED turns, then make all three surfaces (TUI/CLI/alexd) identical and add a test asserting each persists an identical turn_trace+transcript for a RED turn.
 
 ### #2 — Date-ranged export miscounts sessions + late-night signal: uses a now-anchored window, ignoring from/to
-- **Status:** TODO
+- **Status:** DONE
 - **Location:** `dr_alex/export.py:136 (+ statedb.py:865)`  ·  **Category:** correctness  ·  conf high / effort S / fix-risk low
 - **Impact:** VERIFIED: collect() sets window_days=max(1,len(days)) then window_snapshot(now,window_days), which queries sessions WHERE started_ts >= now-window_days with NO upper bound. data.sessions and late_nigh
 - **Fix:** Add a range-scoped reader (sessions_between(from_iso,to_iso) counting started_ts BETWEEN from AND to, plus a late-night count over the same bounds) and use it in collect() instead of window_snapshot; or pass an explicit upper bound into window_snapshot.
