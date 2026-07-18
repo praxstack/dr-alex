@@ -16,7 +16,7 @@
 | 4 | DONE | high/M/low | Prompt-injection defense on the two most-trusted context channels is weak (no fence neutralization + asymmetric framing) AND has zero adversarial test | `dr_alex/memory.py:160 (+ engine.py:143, llm.py:80)` |
 | 5 | DONE | high/M/med | Session-end fan-out silently drops a session's durable memory on a transient scrub/remember failure (marker cleared unconditionally, scrub_failed swallowed) | `dr_alex/fanout.py:133 (+ fanout.py:234, app.py:659-667)` |
 | 6 | DONE | high/S/low | Crisis-fragment debounce bypass in alexd has no endpoint-level test; the DebounceBuffer test uses a fake crisis predicate | `dr_alex/alexd.py:335` |
-| 7 | TODO | high/S/low | Golden crisis corpus's 71 non-RED cases are loaded but never asserted — only RED recall is gated, so false-positive regressions pass silently | `dr_alex/improve.py:210` |
+| 7 | DONE | high/S/low | Golden crisis corpus's 71 non-RED cases are loaded but never asserted — only RED recall is gated, so false-positive regressions pass silently | `dr_alex/improve.py:210` |
 | 8 | TODO | high/M/med | Self-improve 'frozen invariants' gate is substring-presence only, so a behavior-changing persona edit that keeps every marker passes and is committed live | `dr_alex/improve.py:171` |
 | 9 | TODO | high/S/low | Per-turn telemetry recomputes system_prompt() from disk instead of reusing the built prompt — and hashes the WRONG prompt on the alexd memory-augmented path | `dr_alex/engine.py:297` |
 | 10 | TODO | med/S/low | alexd debounce timer-flush silently discards buffered fragments via a no-op flush callback | `dr_alex/alexd.py:98` |
@@ -69,7 +69,7 @@
 - **Fix:** Add an alexd integration test posting a RED text with fragment:True, asserting the response immediately streams the crisis card (meta crisis=true, contains 14416/Shreya) with zero buffering and no model call — exercising the real crisis_prescreen wiring.
 
 ### #7 — Golden crisis corpus's 71 non-RED cases are loaded but never asserted — only RED recall is gated, so false-positive regressions pass silently
-- **Status:** TODO
+- **Status:** DONE
 - **Location:** `dr_alex/improve.py:210`  ·  **Category:** test-coverage  ·  conf high / effort S / fix-risk low
 - **Impact:** check_golden_red_sensitivity filters to expected==RED and gates only on 100% RED recall. corpus.json holds 127 curated cases (56 RED, 34 GREEN, 21 AMBER, 16 NOT_RED) but the 71 non-RED cases — includi
 - **Fix:** Extend the golden gate (or a dedicated test) to assert every non-RED corpus case classifies to its expected tier — at minimum NOT_RED/GREEN are not RED and AMBER is AMBER — so the whole curated corpus guards regressions.

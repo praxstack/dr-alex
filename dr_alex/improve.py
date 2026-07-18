@@ -186,6 +186,11 @@ class GoldenReport:
     sensitivity: float
     red_total: int
     red_hit: int
+    #: Specificity + exact-tier over the non-RED corpus (D7 — catch over-firing / drift).
+    specificity: float = 1.0
+    nonred_total: int = 0
+    nonred_correct: int = 0  # AMBER→AMBER, GREEN→GREEN, NOT_RED→not-RED
+    false_red: int = 0       # non-RED cases that classified RED (the badgering FP class)
 
 
 def _golden_corpus_path(root: Path) -> Path:
@@ -195,9 +200,11 @@ def _golden_corpus_path(root: Path) -> Path:
 def check_golden_red_sensitivity(root: Path) -> GoldenReport:
     """Re-run the golden crisis corpus through the deterministic classifier.
 
-    100% RED sensitivity is the hard merge precondition. A persona edit cannot move the
-    classifier, so this is cheap insurance that nothing regressed. A missing/broken corpus
-    is treated as a FAIL (bias to revert).
+    100% RED sensitivity is the HARD merge precondition (a missed crisis is the one error
+    the design refuses to accept). D7: the non-RED corpus is now asserted too — every
+    AMBER/GREEN case must classify to its exact tier and no non-RED case may false-fire RED —
+    so a change that over-fires (GREEN→RED) or under-classifies AMBER is caught here, not
+    just RED recall. A missing/broken corpus is treated as a FAIL (bias to revert).
     """
     from safety.triage import Tier, triage
 
@@ -207,12 +214,40 @@ def check_golden_red_sensitivity(root: Path) -> GoldenReport:
     except (OSError, ValueError):
         return GoldenReport(passed=False, sensitivity=0.0, red_total=0, red_hit=0)
 
-    red = [c for c in doc.get("cases", []) if c.get("expected") == "RED"]
+    cases = doc.get("cases", [])
+    red = [c for c in cases if c.get("expected") == "RED"]
     if not red:
         return GoldenReport(passed=False, sensitivity=0.0, red_total=0, red_hit=0)
     hit = sum(1 for c in red if triage(c["text"]) is Tier.RED)
     sens = hit / len(red)
-    return GoldenReport(passed=(hit == len(red)), sensitivity=sens, red_total=len(red), red_hit=hit)
+
+    # Non-RED specificity + exact-tier (D7). AMBER/GREEN must match their exact tier;
+    # NOT_RED must simply not be RED. Any non-RED case classifying RED is a false-RED.
+    nonred = [c for c in cases if c.get("expected") in ("AMBER", "GREEN", "NOT_RED")]
+    correct = 0
+    false_red = 0
+    for c in nonred:
+        got = triage(c["text"])
+        if got is Tier.RED:
+            false_red += 1
+        expected = c["expected"]
+        if expected == "NOT_RED":
+            correct += got is not Tier.RED
+        else:
+            correct += got.value == expected
+    nonred_total = len(nonred)
+    specificity = (1.0 - false_red / nonred_total) if nonred_total else 1.0
+
+    passed = (
+        hit == len(red)                       # 100% RED sensitivity — the hard gate
+        and false_red == 0                    # no benign text flagged RED
+        and correct == nonred_total           # every non-RED case to its expected tier
+    )
+    return GoldenReport(
+        passed=passed, sensitivity=sens, red_total=len(red), red_hit=hit,
+        specificity=specificity, nonred_total=nonred_total,
+        nonred_correct=correct, false_red=false_red,
+    )
 
 
 @dataclass

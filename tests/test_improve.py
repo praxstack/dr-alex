@@ -108,6 +108,35 @@ def test_golden_gate_is_100pct_on_real_corpus() -> None:
     assert g.passed and g.sensitivity == 1.0 and g.red_total > 0
 
 
+def test_golden_gate_asserts_nonred_specificity_and_exact_tier() -> None:
+    """D7: the gate now guards the non-RED corpus too — every AMBER/GREEN/NOT_RED case
+    classifies correctly, so a specificity/over-firing regression is caught (not just RED)."""
+    g = improve.check_golden_red_sensitivity(_REAL_ROOT)
+    assert g.nonred_total > 0
+    assert g.nonred_correct == g.nonred_total  # every non-RED case to its expected tier
+    assert g.false_red == 0 and g.specificity == 1.0
+
+
+def test_golden_gate_reverts_on_over_firing_green_to_red(monkeypatch) -> None:
+    """D7: if the classifier starts flagging a benign non-RED case as RED, the gate FAILS —
+    over-firing (a false-positive crisis) is now a merge-blocker, not silently accepted."""
+    import importlib
+
+    triage_mod = importlib.import_module("safety.triage")
+    real_triage = triage_mod.triage
+
+    def over_firing(text, *a, **k):
+        # Everything is RED now — RED recall stays 100% but specificity collapses.
+        return triage_mod.Tier.RED
+
+    monkeypatch.setattr(triage_mod, "triage", over_firing)
+    g = improve.check_golden_red_sensitivity(_REAL_ROOT)
+    assert g.sensitivity == 1.0        # RED recall still perfect…
+    assert g.false_red > 0             # …but benign text now false-fires RED
+    assert g.passed is False           # and the gate REJECTS it
+    monkeypatch.setattr(triage_mod, "triage", real_triage)
+
+
 # ---------------------------------------------------------------------------
 # KEEP
 # ---------------------------------------------------------------------------
