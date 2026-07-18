@@ -192,6 +192,63 @@ def test_dry_run_gates_and_benchmarks_but_never_commits(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_frozen_section_reword_keeping_markers_is_detected() -> None:
+    """D8: an edit that rewords the BODY of a frozen safety section while keeping every
+    marker string must be caught by the section-integrity check (not just marker presence)."""
+    baseline = _persona(_REAL_ROOT)
+    # Reword text INSIDE the frozen SAFETY/crisis-questioning section. No marker is removed.
+    assert "Over-asking is not extra safety" in baseline
+    candidate = baseline.replace(
+        "Over-asking is not extra safety", "Over-asking is perfectly safe", 1
+    )
+    assert candidate != baseline
+
+    # Marker-presence alone is fooled — every invariant marker is still present…
+    presence_only = improve.check_frozen_invariants(candidate)
+    assert presence_only.passed is True
+
+    # …but the baseline-aware integrity check rejects it: the frozen section body changed.
+    integrity = improve.check_frozen_invariants(candidate, baseline=baseline)
+    assert integrity.passed is False
+    assert any("safety" in s for s in integrity.changed_sections)
+
+
+def test_revert_when_frozen_section_body_reworded(tmp_path) -> None:
+    """D8 end-to-end: the self-improve loop REVERTS a candidate that rewords a frozen
+    safety section's body even though all header markers survive."""
+    root = _tmp_repo(tmp_path)
+    before = _persona(root)
+
+    def propose_reword(_p):
+        return improve.ProposedEdit(
+            summary="tighten crisis-questioning rationale",
+            find="Over-asking is not extra safety",
+            replace="Over-asking is perfectly safe",
+        )
+
+    calls = {"gen": 0, "judge": 0}
+
+    def gen(p, prompt):
+        calls["gen"] += 1
+        return "x"
+
+    def judge(t):
+        calls["judge"] += 1
+        return 5.0
+
+    res = improve.run_once(root=root, propose_fn=propose_reword, generate_fn=gen,
+                           judge_fn=judge, prompts=_PROMPTS, now=_NOW)
+
+    assert res.decision == "revert"
+    assert "safety gate" in res.reason.lower()
+    # Frozen markers were all present — it was the section-integrity check that fenced it.
+    assert all(res.invariants.values())
+    # Gate short-circuits before any benchmark; persona untouched; no commit.
+    assert calls == {"gen": 0, "judge": 0}
+    assert _persona(root) == before
+    assert _git(root, "rev-list", "--count", "HEAD").strip() == "1"
+
+
 def test_revert_when_frozen_invariant_missing(tmp_path) -> None:
     root = _tmp_repo(tmp_path)
     before = _persona(root)
