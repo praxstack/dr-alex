@@ -67,15 +67,21 @@ def _eval_command(args: list[str]) -> int:
 
 
 def _books_command(args: list[str]) -> int:
-    """`dr-alex books ingest|status` — build / inspect the book RAG index."""
+    """`dr-alex books ingest|status|add` — build / inspect / grow the book RAG index."""
     from books import manifest
     from books import retriever
 
     sub = args[0] if args else "status"
 
+    if sub == "add":
+        return _books_add_command(args[1:])
+
     if sub == "ingest":
         print("Ingesting the book corpus into the FTS5/BM25 index…")
         stats = retriever.build_index()
+        if stats.discovered:
+            print(f"  auto-discovered {len(stats.discovered)} new drop-in book(s): "
+                  + ", ".join(stats.discovered))
         print(f"\nIndexed {stats.books_indexed} books, {stats.total_chunks} chunks.")
         for slug, n in stats.per_book.items():
             print(f"  {slug:28s} {n:>5d} chunks")
@@ -86,21 +92,81 @@ def _books_command(args: list[str]) -> int:
 
     if sub == "status":
         st = retriever.index_status()
+        core = manifest.core_books()
+        user = manifest.user_books()
         print("Corpus manifest:")
-        for spec in manifest.included_books():
-            print(f"  [included] {spec.slug:28s} {spec.title}")
+        for spec in core:
+            if spec.included:
+                print(f"  [included] {spec.slug:28s} {spec.title}")
+        for spec in user:
+            if spec.included:
+                src = f"  (from {spec.source})" if spec.source else ""
+                print(f"  [user]     {spec.slug:28s} {spec.title}{src}")
         for spec in manifest.excluded_books():
             print(f"  [EXCLUDED] {spec.slug:28s} {spec.title}")
             print(f"             reason: {spec.exclusion_reason}")
         print()
+        print(f"Corpus dir: {manifest.corpus_dir()}")
+        print(f"  core books: {sum(1 for s in core if s.included)}  |  "
+              f"user-added: {sum(1 for s in user if s.included)}  |  "
+              f"excluded: {len(manifest.excluded_books())}")
         if st.exists:
             print(f"Index: {st.path}  ({st.total_chunks} chunks across {len(st.per_book)} books)")
         else:
             print(f"Index: {st.path}  — NOT BUILT. Run: dr-alex books ingest")
+        print("\nAdd a book:  dr-alex books add <file.pdf|file.txt> [--title \"…\"] [--authors \"…\"]")
+        print("…or just drop a .txt/.pdf into the corpus dir and run: dr-alex books ingest")
         return 0
 
-    print(f"Unknown books subcommand: {sub!r}. Use 'ingest' or 'status'.", file=sys.stderr)
+    print(f"Unknown books subcommand: {sub!r}. Use 'ingest', 'status', or 'add'.",
+          file=sys.stderr)
     return 2
+
+
+def _books_add_command(args: list[str]) -> int:
+    """`dr-alex books add <path> [--title "…"] [--authors "…"]` — register + index a book."""
+    from books import dropin, extract, retriever
+
+    positionals = [a for i, a in enumerate(args)
+                   if not a.startswith("--")
+                   and not (i > 0 and args[i - 1] in ("--title", "--authors"))]
+    if not positionals:
+        print("Usage: dr-alex books add <file.pdf|file.txt> [--title \"…\"] [--authors \"…\"]",
+              file=sys.stderr)
+        return 2
+    path = positionals[0]
+    title = _opt(args, "--title")
+    authors = _opt(args, "--authors")
+
+    try:
+        res = dropin.add_book(path, title=title, authors=authors)
+    except FileNotFoundError as exc:
+        print(f"books add: {exc}", file=sys.stderr)
+        return 2
+    except ValueError as exc:
+        print(f"books add: {exc}", file=sys.stderr)
+        return 2
+    except extract.PdfLibraryMissing as exc:
+        # Graceful: a PDF was dropped without the (optional) PDF lib. One-line hint, no crash.
+        print(f"books add: {exc}", file=sys.stderr)
+        return 1
+
+    if not res.included:
+        print(f"Registered but EXCLUDED (never indexed): {res.title}")
+        print(f"  reason: {res.exclusion_reason}")
+        print("  Fix the source (better extraction / a real text file) and re-add.")
+        return 1
+
+    print(f"Added: {res.title}")
+    print(f"  slug:     {res.slug}")
+    print(f"  filename: {res.filename}  ({res.chars} chars of text)")
+    print("Rebuilding the index…")
+    stats = retriever.build_index()
+    n = stats.per_book.get(res.slug, 0)
+    print(f"  indexed {n} chunks (corpus now {stats.books_indexed} books, "
+          f"{stats.total_chunks} chunks total).")
+    print(f"Index: {stats.index_path}")
+    return 0
 
 
 def _serve_command(args: list[str]) -> int:

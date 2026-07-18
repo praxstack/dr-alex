@@ -28,6 +28,8 @@ _FORBIDDEN = (
     re.compile(r"^data/\.session_state\.[^/]*\.tmp$"),  # atomic-write temp
     re.compile(r"(^|/)pairing\.db"),             # Phase 5: device-token hashes (auth secrets)
     re.compile(r"(^|/)alexd\.pid$"),             # Phase 5: alexd pidfile
+    re.compile(r"(^|/)user-books\.json$"),       # Phase 2b: supplemental drop-in book manifest
+    re.compile(r"\.extracted\.txt$"),            # Phase 2b: derived PDF extraction caches
 )
 
 

@@ -1,21 +1,50 @@
 """Corpus manifest — the single source of truth for what is (and is not) indexed.
 
-13 books are included with canonical titles. The 14th, Beck's *Cognitive Therapy
-of Depression*, had a broken 876-character PDF extraction and has NO usable text:
-it is listed here as EXCLUDED and must WARN loudly at every index build. It must
-never be silently indexed, and Dr. Alex must never pretend to cite it.
+13 books are included with canonical titles (the curated *core*). The 14th, Beck's
+*Cognitive Therapy of Depression*, had a broken 876-character PDF extraction and has
+NO usable text: it is listed here as EXCLUDED and must WARN loudly at every index
+build. It must never be silently indexed, and Dr. Alex must never pretend to cite it.
+
+**Drop-in books (Phase 2b).** The curated ``_BOOKS`` tuple is never hand-edited to add
+a book. Instead a *supplemental user manifest* — a JSON side-file that lives OUTSIDE
+git-tracked code at ``<corpus_dir>/user-books.json`` — carries any book the user drops
+in. ``included_books()`` / ``excluded_books()`` / ``all_books()`` return the core
+``_BOOKS`` MERGED with the validated user entries. A malformed user manifest (or a
+malformed entry inside it) WARNs loudly and is skipped — it never crashes ingest, and
+the curated core always survives.
 """
 
 from __future__ import annotations
 
+import json
+import logging
 import os
-from dataclasses import dataclass
+import tempfile
+from dataclasses import dataclass, replace
 from pathlib import Path
+
+log = logging.getLogger("dr_alex.books")
 
 BOOKS_DIR_ENV = "DR_ALEX_BOOKS_DIR"
 DEFAULT_CORPUS_DIR = Path(
     "/Users/prax/agent-memory-staging/claude-export/dr-alex-books"
 )
+
+# The supplemental user manifest lives next to the books it registers, so a corpus is
+# self-contained ("drop a file in the folder"). It is derived/private, never in git.
+USER_MANIFEST_NAME = "user-books.json"
+
+# Broken-extraction guard: a book whose usable text is under this many characters is
+# treated like the Beck extraction — EXCLUDED + WARNed, never silently indexed. Beck's
+# broken PDF yielded 876 chars, so 2000 is a safe floor for "there is no real book here".
+MIN_USABLE_CHARS = 2000
+
+
+def broken_extraction_reason(n_chars: int) -> str:
+    return (
+        f"broken/short extraction ({n_chars} chars < {MIN_USABLE_CHARS} min) — no usable "
+        "text; must never be silently indexed or cited"
+    )
 
 
 @dataclass(frozen=True)
@@ -27,6 +56,11 @@ class BookSpec:
     filename: str | None
     included: bool = True
     exclusion_reason: str | None = None
+    # ``origin`` distinguishes the curated core from a drop-in book; ``source`` records
+    # the original dropped file (e.g. the .pdf a .txt cache was extracted from) so
+    # auto-discovery never re-registers it and ``status`` can show provenance.
+    origin: str = "core"
+    source: str | None = None
 
 
 _BOOKS: tuple[BookSpec, ...] = (
@@ -136,25 +170,167 @@ _BOOKS: tuple[BookSpec, ...] = (
 )
 
 
-def all_books() -> tuple[BookSpec, ...]:
+def corpus_dir() -> Path:
+    override = os.environ.get(BOOKS_DIR_ENV)
+    return Path(override) if override else DEFAULT_CORPUS_DIR
+
+
+def user_manifest_path(corpus_dir_: Path | None = None) -> Path:
+    """Location of the supplemental user manifest (``<corpus_dir>/user-books.json``)."""
+    return (corpus_dir_ or corpus_dir()) / USER_MANIFEST_NAME
+
+
+# ---------------------------------------------------------------------------
+# Supplemental user manifest (drop-in books) — validated merge, never crashes
+# ---------------------------------------------------------------------------
+
+_REQUIRED_STR_FIELDS = ("slug", "title", "filename")
+
+
+def _coerce_entry(raw: object, index: int) -> BookSpec | None:
+    """Validate one user-manifest entry → BookSpec, or None (WARN) if malformed."""
+    if not isinstance(raw, dict):
+        log.warning("USER MANIFEST: entry #%d is not an object — skipped: %r", index, raw)
+        return None
+    for key in _REQUIRED_STR_FIELDS:
+        val = raw.get(key)
+        if not isinstance(val, str) or not val.strip():
+            log.warning(
+                "USER MANIFEST: entry #%d missing/invalid %r — skipped: %r",
+                index, key, raw,
+            )
+            return None
+    included = raw.get("included", True)
+    if not isinstance(included, bool):
+        log.warning("USER MANIFEST: entry #%d 'included' not a bool — skipped: %r", index, raw)
+        return None
+    slug = raw["slug"].strip()
+    title = raw["title"].strip()
+    return BookSpec(
+        slug=slug,
+        title=title,
+        short_title=(raw.get("short_title") or title).strip() or title,
+        authors=(raw.get("authors") or "Unknown").strip() or "Unknown",
+        filename=raw["filename"].strip(),
+        included=included,
+        exclusion_reason=(raw.get("exclusion_reason") or None),
+        origin="user",
+        source=(raw.get("source") or None),
+    )
+
+
+def user_books(corpus_dir_: Path | None = None) -> tuple[BookSpec, ...]:
+    """Validated drop-in books from the user manifest.
+
+    A malformed file (bad JSON, wrong shape) or a malformed entry WARNs loudly and is
+    skipped; the curated core is never affected and ingest never crashes.
+    """
+    path = user_manifest_path(corpus_dir_)
+    if not path.exists():
+        return ()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        log.warning("USER MANIFEST: %s is unreadable/invalid JSON — skipped entirely: %s", path, exc)
+        return ()
+    if isinstance(data, dict):
+        entries = data.get("books")
+    elif isinstance(data, list):
+        entries = data
+    else:
+        entries = None
+    if not isinstance(entries, list):
+        log.warning("USER MANIFEST: %s has no 'books' list — skipped entirely.", path)
+        return ()
+
+    out: list[BookSpec] = []
+    seen: set[str] = {b.slug for b in _BOOKS}
+    for i, raw in enumerate(entries):
+        spec = _coerce_entry(raw, i)
+        if spec is None:
+            continue
+        if spec.slug in seen:
+            log.warning(
+                "USER MANIFEST: entry #%d slug %r collides with an existing book — skipped.",
+                i, spec.slug,
+            )
+            continue
+        seen.add(spec.slug)
+        out.append(spec)
+    return tuple(out)
+
+
+def core_books() -> tuple[BookSpec, ...]:
+    """The curated, code-defined core (never mutated by drop-in books)."""
     return _BOOKS
 
 
-def included_books() -> tuple[BookSpec, ...]:
-    return tuple(b for b in _BOOKS if b.included)
+def all_books(corpus_dir_: Path | None = None) -> tuple[BookSpec, ...]:
+    return _BOOKS + user_books(corpus_dir_)
 
 
-def excluded_books() -> tuple[BookSpec, ...]:
-    return tuple(b for b in _BOOKS if not b.included)
+def included_books(corpus_dir_: Path | None = None) -> tuple[BookSpec, ...]:
+    return tuple(b for b in all_books(corpus_dir_) if b.included)
 
 
-def by_slug(slug: str) -> BookSpec | None:
-    for b in _BOOKS:
+def excluded_books(corpus_dir_: Path | None = None) -> tuple[BookSpec, ...]:
+    return tuple(b for b in all_books(corpus_dir_) if not b.included)
+
+
+def by_slug(slug: str, corpus_dir_: Path | None = None) -> BookSpec | None:
+    for b in all_books(corpus_dir_):
         if b.slug == slug:
             return b
     return None
 
 
-def corpus_dir() -> Path:
-    override = os.environ.get(BOOKS_DIR_ENV)
-    return Path(override) if override else DEFAULT_CORPUS_DIR
+# ---------------------------------------------------------------------------
+# Registration — append/replace a drop-in book (atomic, private perms)
+# ---------------------------------------------------------------------------
+
+
+def _write_user_specs(specs: list[BookSpec], corpus_dir_: Path | None = None) -> Path:
+    """Atomically persist the user manifest (0600). Only user-origin specs are stored."""
+    path = user_manifest_path(corpus_dir_)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "books": [
+            {
+                "slug": s.slug,
+                "title": s.title,
+                "short_title": s.short_title,
+                "authors": s.authors,
+                "filename": s.filename,
+                "included": s.included,
+                "exclusion_reason": s.exclusion_reason,
+                "source": s.source,
+            }
+            for s in specs
+        ]
+    }
+    text = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".user-books.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:  # pragma: no cover - best effort on odd filesystems
+        pass
+    return path
+
+
+def register_user_book(spec: BookSpec, corpus_dir_: Path | None = None) -> BookSpec:
+    """Append (or replace, keyed by slug) a drop-in book in the user manifest.
+
+    The stored spec is always marked ``origin='user'``. Returns the stored spec.
+    """
+    stored = replace(spec, origin="user")
+    current = [b for b in user_books(corpus_dir_) if b.slug != stored.slug]
+    current.append(stored)
+    _write_user_specs(current, corpus_dir_)
+    return stored

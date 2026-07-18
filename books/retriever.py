@@ -91,6 +91,7 @@ class IngestStats:
     total_chunks: int = 0
     excluded: list[tuple[str, str]] = field(default_factory=list)  # (title, reason)
     warned_excluded: bool = False
+    discovered: list[str] = field(default_factory=list)  # slugs auto-registered this build
 
     @property
     def books_indexed(self) -> int:
@@ -247,7 +248,15 @@ def build_index(
 
     stats = IngestStats(index_path=index_file)
 
-    # Excluded books: WARN loudly, never index.
+    # Auto-discovery: register any loose .txt/.pdf dropped into the corpus that no manifest
+    # yet knows about, so "drop a file in the folder, run ingest" just works. Registration
+    # persists to the user manifest; the included/excluded loops below then pick it up.
+    from books import dropin  # local import keeps the package import graph acyclic
+
+    for res in dropin.discover(corpus_dir):
+        stats.discovered.append(res.slug)
+
+    # Excluded books (curated Beck extraction + any short/broken drop-ins): WARN, never index.
     for spec in manifest.excluded_books():
         stats.excluded.append((spec.title, spec.exclusion_reason or "excluded"))
         stats.warned_excluded = True
@@ -262,7 +271,24 @@ def build_index(
         conn.executescript(_SCHEMA)
         next_id = 1
         for spec in manifest.included_books():
-            text = _read_book(spec, corpus_dir)
+            try:
+                text = _read_book(spec, corpus_dir)
+            except OSError as exc:
+                # A registered book whose file vanished must fail loudly, never silently
+                # drop out: treat it exactly like the broken-extraction guard below.
+                reason = f"source file unreadable ({spec.filename!r}): {exc}"
+                stats.excluded.append((spec.title, reason))
+                stats.warned_excluded = True
+                log.warning("CORPUS EXCLUSION: %r is NOT indexed — %s", spec.title, reason)
+                continue
+            # Broken-extraction guard (mirrors the Beck exclusion): never silently index a
+            # book with no usable text — WARN loudly and mark it excluded instead.
+            if len(text.strip()) < manifest.MIN_USABLE_CHARS:
+                reason = manifest.broken_extraction_reason(len(text.strip()))
+                stats.excluded.append((spec.title, reason))
+                stats.warned_excluded = True
+                log.warning("CORPUS EXCLUSION: %r is NOT indexed — %s", spec.title, reason)
+                continue
             chunks: list[Chunk] = chunk_book(spec, text)
             rows = []
             fts_rows = []

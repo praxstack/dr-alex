@@ -49,5 +49,13 @@ data/.session_state.*.tmp
 # Phase 2 (council D1): derived book index — rebuildable from the corpus, never committed
 data/index/
 
+# Phase 2b (drop-in books): the supplemental user manifest + PDF extraction caches are
+# derived/private and live in the corpus dir (outside git by default). These patterns are
+# belt-and-suspenders in case a corpus is ever pointed inside the repo (Directive 3).
+user-books.json
+*.extracted.txt
+data/user-books.json
+data/extracted/
+
 # Session digests handed to the gardener — clinical content, never in git (Directive 3)
 inbox/
