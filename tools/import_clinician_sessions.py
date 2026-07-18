@@ -100,6 +100,7 @@ def transform_distillation(text: str) -> list[str]:
         if not m:
             continue
         fact = re.sub(r"\s+", " ", m.group(1)).strip()
+        fact = re.sub(r"^\[[ xX]\]\s*", "", fact).strip()  # drop markdown checkbox markers ([ ] / [x])
         if len(fact) < 8:  # skip trivially short fragments
             continue
         key = fact.lower()
