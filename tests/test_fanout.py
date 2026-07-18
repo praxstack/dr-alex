@@ -210,6 +210,49 @@ def test_failed_remember_is_retried_on_replay(tmp_path) -> None:
     assert rec_fail.bodies == ["Fact one about Prax.", "Fact two about Prax."]
 
 
+def test_transient_remember_failure_keeps_session_recoverable(tmp_path) -> None:
+    """D5: a remember that RAISES transiently must not silently drop the session's memory —
+    the crash-safety marker persists and the next recovery completes it without duplication."""
+    sp = tmp_path / "state.json"
+
+    class _RaiseOnceRecorder:
+        def __init__(self) -> None:
+            self.bodies: list[str] = []
+            self.raised = False
+
+        def __call__(self, body, *, tags, sensitivity, importance, memtype):
+            # Fail (raise) on the FIRST durable write of the first run; succeed thereafter.
+            if not self.raised and not self.bodies:
+                self.raised = True
+                raise RuntimeError("transient store outage")
+            idx = len(self.bodies)
+            self.bodies.append(body)
+            return memstore.WriteResult(ok=True, id=f"mem-{idx}")
+
+    rec = _RaiseOnceRecorder()
+    seams, _cw, inbox = _seams(tmp_path, remember=rec)
+
+    # First run: the first durable write raises → that index is NOT ledgered → incomplete.
+    res1 = fanout.finalize_session(
+        [("user", "hi"), ("assistant", "hey")],
+        session_id="sess1", started_at="2026-07-18T08:00:00Z", risk_tier_max="GREEN",
+        now=_now(), distill_fn=lambda *a, **k: _digest(), state_path=sp, **seams,
+    )
+    # The session is NOT silently finalized — the marker survives for replay.
+    assert statefile.load(sp).marker() is not None
+    assert rec.raised is True
+
+    # Next session start: recovery completes the fan-out; the previously-failed learning is
+    # retried and BOTH durable learnings land, with no duplication.
+    res2 = fanout.recover_if_needed(state_path=sp, **seams)
+    assert res2 is not None
+    assert statefile.load(sp).marker() is None  # fully finalized now
+    assert sorted(rec.bodies) == ["Fact one about Prax.", "Fact two about Prax."]
+    assert len(rec.bodies) == 2  # no duplicate write
+    # Exactly one inbox digest across both runs (deterministic filename ⇒ no dupes).
+    assert len(list(inbox.glob("*.md"))) == 1
+
+
 def test_should_finalize_rules() -> None:
     assert fanout.should_finalize(0, explicit_close=True) is False
     assert fanout.should_finalize(1, explicit_close=True) is True

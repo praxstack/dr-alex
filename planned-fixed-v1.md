@@ -14,7 +14,7 @@
 | 2 | TODO | high/S/low | Date-ranged export miscounts sessions + late-night signal: uses a now-anchored window, ignoring from/to | `dr_alex/export.py:136 (+ statedb.py:865)` |
 | 3 | DONE | high/S/low | Re-ask backstop is regenerate-once-and-hope, not block; the still-probes branch is untested and mislabeled 'reask-blocked' | `dr_alex/engine.py:402` |
 | 4 | DONE | high/M/low | Prompt-injection defense on the two most-trusted context channels is weak (no fence neutralization + asymmetric framing) AND has zero adversarial test | `dr_alex/memory.py:160 (+ engine.py:143, llm.py:80)` |
-| 5 | TODO | high/M/med | Session-end fan-out silently drops a session's durable memory on a transient scrub/remember failure (marker cleared unconditionally, scrub_failed swallowed) | `dr_alex/fanout.py:133 (+ fanout.py:234, app.py:659-667)` |
+| 5 | DONE | high/M/med | Session-end fan-out silently drops a session's durable memory on a transient scrub/remember failure (marker cleared unconditionally, scrub_failed swallowed) | `dr_alex/fanout.py:133 (+ fanout.py:234, app.py:659-667)` |
 | 6 | TODO | high/S/low | Crisis-fragment debounce bypass in alexd has no endpoint-level test; the DebounceBuffer test uses a fake crisis predicate | `dr_alex/alexd.py:335` |
 | 7 | TODO | high/S/low | Golden crisis corpus's 71 non-RED cases are loaded but never asserted — only RED recall is gated, so false-positive regressions pass silently | `dr_alex/improve.py:210` |
 | 8 | TODO | high/M/med | Self-improve 'frozen invariants' gate is substring-presence only, so a behavior-changing persona edit that keeps every marker passes and is committed live | `dr_alex/improve.py:171` |
@@ -57,7 +57,7 @@
 - **Fix:** Neutralize fence tokens in ALL externally-sourced inserted content (strip/replace </BOOK_CONTEXT>,</PERSONAL_MEMORY>,</CONTINUITY_BRIEF>,<SAFETY_STATE,<SESSION_START> or wrap each block in a per-session nonce delimiter), and add the same 'evidence, not instruction' framing to PERSONAL_MEMORY and CONTINUITY_BRIEF. Add adversarial turn tests feeding injection-bearing chunks/snippets, asserting the envelope holds and gates strip injection-induced artifacts.
 
 ### #5 — Session-end fan-out silently drops a session's durable memory on a transient scrub/remember failure (marker cleared unconditionally, scrub_failed swallowed)
-- **Status:** TODO
+- **Status:** DONE
 - **Location:** `dr_alex/fanout.py:133 (+ fanout.py:234, app.py:659-667)`  ·  **Category:** correctness  ·  conf high / effort M / fix-risk med
 - **Impact:** complete() runs _channel_c_inbox (returns (None,True) on ScrubError, leaving inbox_written=False) then UNCONDITIONALLY calls _finalize_state, which clears st.unfinalized — wiping the crash-safety mark
 - **Fix:** Do not clear unfinalized in _finalize_state when any channel step is incomplete (inbox_written False, unwritten durable indices, or scrub_failed True) — keep the marker so recover_if_needed replays next start; and surface scrub_failed/remember failures loudly (log/telemetry) instead of letting app.py discard them.
