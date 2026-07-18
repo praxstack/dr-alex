@@ -218,6 +218,38 @@ def _read_room(name: str) -> str | None:
         return None
 
 
+# Response-hardening headers for the self-contained PWA shell + assets (D19). The Room fetches
+# nothing off-origin, so a strict CSP holds: everything is 'self' except the inline <style> in
+# the safety-critical crisis card ('unsafe-inline' for styles only — never scripts) and the
+# manifest's data: icon (img-src data:). script-src stays 'self' (no inline scripts anywhere).
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; "
+    "connect-src 'self'; "
+    "font-src 'self'; "
+    "object-src 'none'; "
+    "base-uri 'none'; "
+    "frame-ancestors 'none'; "
+    "form-action 'none'"
+)
+_SECURITY_HEADERS = {
+    "Content-Security-Policy": _CSP,
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "X-Frame-Options": "DENY",
+}
+
+
+def _secure_headers(extra: dict | None = None) -> dict:
+    """Merge the response-hardening headers with any per-response headers (D19)."""
+    headers = dict(_SECURITY_HEADERS)
+    if extra:
+        headers.update(extra)
+    return headers
+
+
 def _asset_response(name: str) -> Response:
     body = _read_room(name)
     if body is None:
@@ -225,11 +257,11 @@ def _asset_response(name: str) -> Response:
     ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
     if name.endswith(".js"):
         ctype = "text/javascript"
-    headers = {}
+    extra = {}
     # The service worker must be allowed to control the whole origin scope.
     if name == "sw.js":
-        headers["Service-Worker-Allowed"] = "/"
-    return Response(content=body, media_type=ctype, headers=headers)
+        extra["Service-Worker-Allowed"] = "/"
+    return Response(content=body, media_type=ctype, headers=_secure_headers(extra))
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +279,7 @@ def create_app() -> FastAPI:
         body = _read_room("index.html")
         if body is None:  # pragma: no cover - room assets are shipped with the package
             raise HTTPException(status_code=500, detail="app shell missing")
-        return HTMLResponse(content=body)
+        return HTMLResponse(content=body, headers=_secure_headers())
 
     @app.get("/manifest.json")
     async def manifest() -> Response:
@@ -277,7 +309,7 @@ def create_app() -> FastAPI:
         if body is None:  # pragma: no cover
             # Fall back to a rendered card from the single source of truth (still model-free).
             body = "<pre>" + crisis_card.render_text() + "</pre>"
-        return HTMLResponse(content=body)
+        return HTMLResponse(content=body, headers=_secure_headers())
 
     # -- ungated: health --------------------------------------------------
 

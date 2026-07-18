@@ -102,6 +102,22 @@ def test_app_shell_and_assets_are_ungated(client) -> None:
     assert client.get("/sw.js").headers.get("Service-Worker-Allowed") == "/"
 
 
+def test_shell_and_assets_carry_hardening_headers(client) -> None:
+    # D19: the shell + every asset (+ the crisis card) carry a strict self-only CSP and the
+    # standard response-hardening headers. The PWA is self-contained so nothing external breaks.
+    for path in ("/", "/crisis", "/manifest.json", "/app.css", "/app.js", "/sw.js"):
+        r = client.get(path)
+        assert r.status_code == 200, path
+        csp = r.headers.get("Content-Security-Policy", "")
+        assert "default-src 'self'" in csp, path
+        assert "object-src 'none'" in csp and "frame-ancestors 'none'" in csp, path
+        assert "script-src 'self'" in csp and "'unsafe-inline'" not in csp.split("style-src")[0], path
+        assert r.headers.get("X-Content-Type-Options") == "nosniff", path
+        assert r.headers.get("Referrer-Policy") == "no-referrer", path
+    # The PWA still loads: the shell references only same-origin assets, all present.
+    assert '<script src="/app.js"' in client.get("/").text
+
+
 # ---------------------------------------------------------------------------
 # Device-token gate (council D3)
 # ---------------------------------------------------------------------------
