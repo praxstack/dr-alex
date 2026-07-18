@@ -129,3 +129,36 @@ def test_green_turn_regenerates_on_dependency(monkeypatch) -> None:
     assert calls["n"] == 2  # original + exactly one corrective regeneration
     assert not gates.has_dependency_language(reply)
     assert "Shreya" in reply
+
+
+def test_reask_backstop_blocks_when_regen_still_probes(monkeypatch) -> None:
+    """D3: if the model still emits a safety probe on BOTH the original AND the hardened
+    regen (probe already capped this session), the backstop must BLOCK — the delivered
+    reply is deterministically stripped of the probe, never shipped as a second ask."""
+    from dr_alex.session import SessionState
+
+    retr = _FakeRetriever([])
+    calls = {"n": 0}
+
+    def fake_generate(messages, tier, **kwargs):
+        calls["n"] += 1
+        # Probe on EVERY call, including the hardened re-ask regeneration.
+        return llm.LLMResult(
+            ok=True,
+            text="I hear you. Are you having thoughts of hurting yourself right now?",
+            tier=tier,
+        )
+
+    monkeypatch.setattr(llm, "generate", fake_generate)
+
+    session = SessionState(safety_probe_asked=True)  # probe already capped this session
+    out = engine.run_turn(
+        "I feel hopeless and worthless", retriever=retr, session=session,
+    )
+
+    from safety import crisis_questioning
+    assert out.tier is Tier.AMBER
+    assert calls["n"] == 2  # original + exactly one hardened regeneration
+    assert not crisis_questioning.is_safety_probe(out.text)  # no second ask ships
+    assert out.safety_action == "reask-blocked"
+    assert out.text.strip()  # never an empty reply

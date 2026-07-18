@@ -59,6 +59,40 @@ def is_safety_probe(reply: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Deterministic probe removal — the re-ask backstop's BLOCK (not "hope").
+# ---------------------------------------------------------------------------
+#
+# When the probe has already been capped this session and the model *still* emits a
+# safety probe even after the hardened re-ask directive, we must not ship a second ask.
+# This splits the reply into sentences, drops any sentence that reads as a probe, and
+# returns the remainder — or a fixed, warm, non-probing line if nothing safe is left.
+
+_NEUTRAL_FALLBACK = (
+    "I'm right here with you. Let's stay with whatever you'd like to talk about."
+)
+
+# Sentence boundary: end punctuation (optionally followed by quotes/brackets) + whitespace.
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])[\"')\]]*\s+")
+
+
+def strip_safety_probe(reply: str) -> str:
+    """Remove any safety-probe sentence from ``reply`` (the re-ask backstop's BLOCK).
+
+    Deterministic and model-free: keeps every non-probing sentence, drops the ones that
+    ask the direct self-harm/suicide question. If that would leave nothing, returns a
+    fixed warm, non-probing fallback so we never ship a second ask NOR an empty reply.
+    """
+    if not reply or not reply.strip():
+        return _NEUTRAL_FALLBACK
+    sentences = _SENTENCE_SPLIT.split(reply.strip())
+    kept = [s for s in sentences if s.strip() and not is_safety_probe(s)]
+    cleaned = " ".join(part.strip() for part in kept).strip()
+    if not cleaned or is_safety_probe(cleaned):
+        return _NEUTRAL_FALLBACK
+    return cleaned
+
+
+# ---------------------------------------------------------------------------
 # Did Prax just decline / tell us to stop?
 # ---------------------------------------------------------------------------
 #

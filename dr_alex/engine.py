@@ -415,6 +415,10 @@ def run_turn(
             regen = _gen(note=hardened)
             if regen.text and regen.text.strip():
                 result = regen
+            # BLOCK, don't hope: if the regen STILL probes, deterministically strip the
+            # probe rather than ship a second ask (the still-probes branch). Never a 2nd ask.
+            if crisis_questioning.is_safety_probe(result.text):
+                result.text = crisis_questioning.strip_safety_probe(result.text)
             safety_action = "reask-blocked"
 
     outcome = gates.apply(result.text, retrieved, regenerate=lambda c: _gen(corrective=c).text)  # STEP 4
