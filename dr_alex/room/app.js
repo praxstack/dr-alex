@@ -273,6 +273,22 @@ function registerPasskey() {
 }
 
 // --- Pairing ---------------------------------------------------------------
+
+// Pairing-code alphabet — mirrors safety/pairing.py _CODE_ALPHABET (Crockford base32
+// minus the visually ambiguous I/L/O/U/0/1). We format the field the way the code is
+// shown on the Mac — uppercase, GROUP-hyphen-GROUP — so phone entry mirrors it exactly
+// and you never type the hyphen or reach for Shift. The server canonicalises anyway
+// (_canonical_code: upper + drop non-alphabet), so this is ergonomics, never the gate.
+var PAIR_ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ";
+function formatPairCode(raw) {
+  var up = (raw || "").toUpperCase();
+  var kept = "";
+  for (var i = 0; i < up.length && kept.length < 8; i++) {
+    if (PAIR_ALPHABET.indexOf(up.charAt(i)) !== -1) { kept += up.charAt(i); }
+  }
+  return kept.length > 4 ? kept.slice(0, 4) + "-" + kept.slice(4) : kept;
+}
+
 function showPairing() { $("pair-screen").hidden = false; $("room").hidden = true; }
 function showRoom() { $("pair-screen").hidden = true; $("room").hidden = false; }
 function submitPairing() {
@@ -322,7 +338,12 @@ function init() {
   $("passkey-dismiss").addEventListener("click", function () { $("passkey-nag").hidden = true; });
   $("mood-skip").addEventListener("click", hideMood);
   $("pair-submit").addEventListener("click", submitPairing);
-  $("pair-code").addEventListener("keydown", function (e) { if (e.key === "Enter") submitPairing(); });
+  var pairCode = $("pair-code");
+  pairCode.addEventListener("input", function () {
+    var formatted = formatPairCode(pairCode.value);
+    if (pairCode.value !== formatted) { pairCode.value = formatted; }
+  });
+  pairCode.addEventListener("keydown", function (e) { if (e.key === "Enter") submitPairing(); });
 
   var form = $("composer-form");
   form.addEventListener("submit", function (e) { e.preventDefault(); sendTurn($("input").value); });
