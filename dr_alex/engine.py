@@ -344,6 +344,7 @@ def run_turn(
     session_id: str | None = None,
     system_prompt_override: str | None = None,
     memory_ids: list[str] | None = None,
+    generate_fn=None,
 ) -> TurnOutcome:
     """THE single safety-first turn, shared by the TUI, the one-shot CLI, and ``alexd``.
 
@@ -354,7 +355,11 @@ def run_turn(
     when a ``session`` is passed.
 
     ``system_prompt_override`` lets ``alexd`` fold in the once-per-session memory context
-    (G20) without opening any new model call site. Returns a :class:`TurnOutcome`.
+    (G20) without opening any new model call site. ``generate_fn`` is an optional streaming
+    hook: a callable ``(messages, tier, **kwargs) -> LLMResult`` the TUI injects so its
+    threaded ``llm.stream`` rendering runs through THIS one pipeline instead of a divergent
+    copy (D1); it defaults to the single non-streaming ``llm.generate`` adapter.
+    Returns a :class:`TurnOutcome`.
     """
     if session is not None and recent_risk is None:
         recent_risk = session.recent_risk
@@ -366,7 +371,15 @@ def run_turn(
         # short-circuit before retrieval + model. red_response_text grades the register
         # (full by default; passive-only warmer variant when graded is enabled). No
         # capability token is minted on the RED path (retrieval/recall stay unreachable).
-        return TurnOutcome(tier=tier, text=red_response_text(user_text), safety_action="red-card")
+        # A RED turn is still a turn: persist its trace + encrypted transcript through the
+        # SAME telemetry path every surface uses (D1 product call — crisis turns are the
+        # most safety-critical to keep; phone-side RED was previously never persisted).
+        red_text = red_response_text(user_text)
+        record_turn_telemetry(
+            session_id=session_id, tier=tier, user_text=user_text, reply_text=red_text,
+            outcome=None, safety_action="red-card", now=now,
+        )
+        return TurnOutcome(tier=tier, text=red_text, safety_action="red-card")
 
     # STEP 0 passed (safety_check) → mint the short-lived capability token that book_search
     # (and any gated recall) require. RED never reaches here (council D3).
@@ -385,7 +398,8 @@ def run_turn(
             kwargs["corrective"] = corrective
         if note is not None:
             kwargs["safety_note"] = note
-        return _llm.generate(messages, tier, **kwargs)
+        gen = generate_fn or _llm.generate
+        return gen(messages, tier, **kwargs)
 
     result = _gen()  # STEP 3
 

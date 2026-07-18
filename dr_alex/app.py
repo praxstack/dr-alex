@@ -18,11 +18,9 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, Label, Static
 
 from dr_alex import (
-    captoken,
     engine,
     fanout,
     filevault,
-    gates,
     llm,
     memstore,
     statedb,
@@ -31,7 +29,7 @@ from dr_alex import (
 )
 from dr_alex.session import SessionState
 from dr_alex.widgets import HomeworkScreen, MoodBar, rail_data, render_rail
-from safety import crisis_card, crisis_questioning
+from safety import crisis_card
 from safety.triage import Tier
 
 
@@ -543,92 +541,67 @@ class DrAlexApp(App[None]):
     # -- the safety-first turn --------------------------------------------
 
     def process_turn(self, text: str) -> None:
-        """STEP 0: triage FIRST. RED short-circuits before any model call."""
-        tier = engine.classify(text, recent_risk=self._recent_risk, now=datetime.now())
+        """STEP 0: triage FIRST. RED short-circuits before any model call.
+
+        The whole turn pipeline (triage → retrieve → model → gates → the G1 re-ask
+        backstop → telemetry) lives in ONE place — :func:`engine.run_turn` (D1). This
+        surface only owns its threaded/streaming render; it never re-implements the safety
+        sequence. ``prev_risk`` is captured BEFORE it is overwritten so ``run_turn`` re-runs
+        triage with the exact same recent-risk memory this surface used.
+        """
+        prev_risk = self._recent_risk
+        tier = engine.classify(text, recent_risk=prev_risk, now=datetime.now())
         self._recent_risk = tier
         self._user_turns += 1
         if _TIER_RANK[tier] > _TIER_RANK[self._risk_tier_max]:
             self._risk_tier_max = tier
 
         if tier is Tier.RED:
-            # Hard gate: render the pure crisis card + grounding. No LLM.
+            # Hard gate: render the pure crisis card + grounding. No LLM. Persistence of the
+            # RED turn (trace + encrypted transcript) runs through the SAME run_turn pipeline
+            # every surface shares — no divergent inline telemetry copy (D1). run_turn's RED
+            # path mints no capability token and never reaches retrieval or the model.
             self._add_message("crisis", engine.red_response_rich(text))
             self._add_message(
                 "note",
                 "[b]Reach Shreya.[/b] A message you could send her (you send it, not me):\n"
                 f'[i]"{escape(crisis_card.SHREYA_REACH_OUT_DRAFT)}"[/i]',
             )
-            # G9: a RED turn is still a turn — record its trace + encrypted user message.
-            # No malfunction flag and NO capability token minted (retrieval stays unreachable).
-            try:
-                statedb.record_turn_trace(
-                    session_id=self._session_id, tier="RED",
-                    model_version=telemetry.model_version(),
-                    prompt_hash=telemetry.prompt_hash(self._system_prompt, text),
-                    is_test_traffic=self._test_traffic, safety_action="red-card",
-                )
-                statedb.record_transcript(
-                    session_id=self._session_id, role="user", body=text,
-                    tier="RED", is_test_traffic=self._test_traffic,
-                )
-            except Exception:  # noqa: BLE001 — telemetry never blocks the crisis path
-                pass
+            engine.run_turn(
+                text, recent_risk=prev_risk, session=self._session,
+                session_id=self._session_id, system_prompt_override=self._system_prompt,
+            )
             return
 
-        # GREEN / AMBER -> retrieve, call the model, and gate the reply in a worker.
+        # GREEN / AMBER -> run the ONE shared pipeline in a worker, streaming the render.
         self._history.append(llm.Message(role="user", content=text))
         widget = self._add_message("alex", "[dim]…[/dim]")
-        self._reply(tier, widget, text)
+        self._reply(tier, widget, text, prev_risk)
 
     @work(thread=True, exclusive=True, group="llm")
-    def _reply(self, tier: Tier, widget: Static, user_text: str) -> None:
-        messages = list(self._history)
-        # STEP 1 + 2: book retrieval (after triage) + labeled context assembly. Triage
-        # (safety_check) already passed for this GREEN/AMBER turn, so mint the short-lived
-        # capability token that book_search requires (council D3).
-        with captoken.granted():
-            retrieved, book_ctx = engine.retrieve_context(user_text)
-        # G1: crisis-questioning directive for this AMBER turn (already-asked -> do not re-ask).
-        safety_note = engine.safety_probe_note(self._session, tier, user_text)
+    def _reply(self, tier: Tier, widget: Static, user_text: str, prev_risk: Tier | None) -> None:
+        """Threaded GREEN/AMBER render — delegates the entire safety pipeline to run_turn.
 
-        def _stream(note: str | None, corrective: str | None = None) -> str:
-            return "".join(
-                llm.stream(
-                    messages, tier, system_prompt=self._system_prompt,
-                    book_context=book_ctx, corrective=corrective, safety_note=note,
-                )
-            ).strip()
+        The TUI's only divergence from the CLI/alexd path is a streaming model call; it is
+        injected as ``generate_fn`` so retrieval, the G1 re-ask backstop, the deterministic
+        output gates, the trace, and telemetry all run in engine.run_turn (D1). The gates
+        still need the whole reply, so the stream is buffered before gating — identical
+        semantics to the shared entrypoint, just wired through ``llm.stream`` for the render.
+        """
+        def _stream_generate(messages, gen_tier, **kwargs):
+            text = "".join(llm.stream(messages, gen_tier, **kwargs)).strip()
+            return llm.LLMResult(ok=bool(text), text=text or "(no response)", tier=gen_tier)
 
-        # STEP 3: single model entrypoint. Gates need the whole reply, so buffer it.
-        raw = _stream(safety_note) or "(no response)"
-
-        # G1 deterministic re-ask backstop: if the probe was already capped and the model
-        # asked anyway, regenerate ONCE with a hardened directive (block, don't hope).
-        safety_action = "none"
-        if self._session.suppress_safety_probe:
-            safety_action = "probe-suppressed"
-            if crisis_questioning.is_safety_probe(raw):
-                hardened = crisis_questioning.probe_directive(asked=True, declined=True)
-                regen = _stream(hardened)
-                if regen:
-                    raw = regen
-                safety_action = "reask-blocked"
-
-        # STEP 4: deterministic output gates before anything reaches the screen.
-        outcome = gates.apply(raw, retrieved, regenerate=lambda c: _stream(safety_note, c))
-        if crisis_questioning.is_safety_probe(outcome.text):
-            self._session.safety_probe_asked = True
-            if safety_action == "none":
-                safety_action = "probe-asked"
-        engine.trace_turn(tier, retrieved, outcome, safety_action)  # STEP 5
-        reply = outcome.text or "(no response)"
-        # G9/G10/D2: persist the turn trace (model_version + prompt_hash + is_test_traffic),
-        # the Fernet-encrypted transcript, and queue a repair-ack if the reply came back empty.
-        engine.record_turn_telemetry(
-            session_id=self._session_id, tier=tier, user_text=user_text,
-            reply_text=outcome.text, outcome=outcome, safety_action=safety_action,
+        out = engine.run_turn(
+            user_text,
+            history=list(self._history[:-1]),  # run_turn re-appends the current user turn
+            recent_risk=prev_risk,
+            session=self._session,
+            session_id=self._session_id,
+            system_prompt_override=self._system_prompt,
+            generate_fn=_stream_generate,
         )
-
+        reply = out.text or "(no response)"
         self._history.append(llm.Message(role="assistant", content=reply))
         self.call_from_thread(widget.update, "[b]Alex[/b]\n" + escape(reply))
         self.call_from_thread(self._scroll_chat)
