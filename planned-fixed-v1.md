@@ -12,7 +12,7 @@
 |---|---|---|---|---|
 | 1 | DONE | high/M/med | TUI re-implements the safety turn pipeline instead of calling run_turn; the copies have drifted so phone-side RED (crisis) turns are never persisted | `dr_alex/app.py:584 (+ engine.py:369, alexd.py:159)` |
 | 2 | TODO | high/S/low | Date-ranged export miscounts sessions + late-night signal: uses a now-anchored window, ignoring from/to | `dr_alex/export.py:136 (+ statedb.py:865)` |
-| 3 | TODO | high/S/low | Re-ask backstop is regenerate-once-and-hope, not block; the still-probes branch is untested and mislabeled 'reask-blocked' | `dr_alex/engine.py:402` |
+| 3 | DONE | high/S/low | Re-ask backstop is regenerate-once-and-hope, not block; the still-probes branch is untested and mislabeled 'reask-blocked' | `dr_alex/engine.py:402` |
 | 4 | TODO | high/M/low | Prompt-injection defense on the two most-trusted context channels is weak (no fence neutralization + asymmetric framing) AND has zero adversarial test | `dr_alex/memory.py:160 (+ engine.py:143, llm.py:80)` |
 | 5 | TODO | high/M/med | Session-end fan-out silently drops a session's durable memory on a transient scrub/remember failure (marker cleared unconditionally, scrub_failed swallowed) | `dr_alex/fanout.py:133 (+ fanout.py:234, app.py:659-667)` |
 | 6 | TODO | high/S/low | Crisis-fragment debounce bypass in alexd has no endpoint-level test; the DebounceBuffer test uses a fake crisis predicate | `dr_alex/alexd.py:335` |
@@ -45,7 +45,7 @@
 - **Fix:** Add a range-scoped reader (sessions_between(from_iso,to_iso) counting started_ts BETWEEN from AND to, plus a late-night count over the same bounds) and use it in collect() instead of window_snapshot; or pass an explicit upper bound into window_snapshot.
 
 ### #3 — Re-ask backstop is regenerate-once-and-hope, not block; the still-probes branch is untested and mislabeled 'reask-blocked'
-- **Status:** TODO
+- **Status:** DONE
 - **Location:** `dr_alex/engine.py:402`  ·  **Category:** correctness+test-coverage  ·  conf high / effort S / fix-risk low
 - **Impact:** VERIFIED: the G1 backstop fires one hardened regen and sets safety_action='reask-blocked' unconditionally, never re-checking crisis_questioning.is_safety_probe(regen.text); gates.apply doesn't detect 
 - **Fix:** Harden run_turn to re-check the regen and, if it still probes, deterministically strip/replace it (or loop) rather than accept one regen blindly and mislabel it. Add a regression where the fake LLM returns a probe on BOTH calls, asserting the delivered reply is not a safety probe.
