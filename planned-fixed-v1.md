@@ -26,7 +26,7 @@
 | 14 | DONE | high/M/low | No top-level README / getting-started for the main application | `dr_alex/cli.py:1` |
 | 15 | DONE | med/S/low | No dev/agent-facing AGENTS.md or CLAUDE.md in a repo built and self-modified by agents | `dr_alex/improve.py:35` |
 | 16 | DONE | high/S/med | No linter, formatter, or type-checker for a safety-critical codebase | `pyproject.toml:53` |
-| 17 | TODO | high/S/med | statedb._connect re-applies the full 8-table schema on every single DB operation | `dr_alex/statedb.py:187` |
+| 17 | DONE | high/S/med | statedb._connect re-applies the full 8-table schema on every single DB operation | `dr_alex/statedb.py:187` |
 | 18 | TODO | med/M/med | memctl recall/remember/scrub each cold-spawn `uv run`; session-end fan-out spawns one subprocess per durable learning | `dr_alex/memstore.py:83` |
 | 19 | TODO | high/S/low | The Room PWA shell is served with no Content-Security-Policy or response-hardening headers | `dr_alex/alexd.py:216` |
 
@@ -129,7 +129,7 @@
 - **Fix:** Add ruff (lint+format) and a mypy config to pyproject plus a minimal local script running `ruff check`, `mypy`, `uv run pytest -q`. Introduce non-blocking to absorb the initial backlog, then ratchet to blocking on the safety/ and gates modules first.
 
 ### #17 — statedb._connect re-applies the full 8-table schema on every single DB operation
-- **Status:** TODO
+- **Status:** DONE
 - **Location:** `dr_alex/statedb.py:187`  ·  **Category:** performance  ·  conf high / effort S / fix-risk med
 - **Impact:** The _connect context manager runs executescript(_SCHEMA) (CREATE TABLE IF NOT EXISTS x8) every entry, for reads as well as writes — ~3 fresh connections + 3 full schema re-applications per turn, and e
 - **Fix:** Apply the schema once (init_db on first use, or gate executescript behind a PRAGMA user_version check / module-level _initialized flag) so routine reads/writes skip the CREATE-TABLE script; optionally reuse a single connection.
