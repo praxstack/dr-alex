@@ -31,6 +31,7 @@ from dr_alex import statedb
 from dr_alex import statefile as _statefile
 from dr_alex import telemetry
 from dr_alex.session import SessionState
+from safety import context_guard
 from safety import crisis_card
 from safety import crisis_questioning
 from safety.triage import Tier, red_category, triage
@@ -149,7 +150,10 @@ def assemble_book_context(retrieved) -> str | None:
             f'[B{i}] {{book: "{ch.book_title}", chapter: {_chapter_repr(ch.chapter)}, '
             f'chunk_id: "{ch.chunk_id}"}}'
         )
-        lines.append(ch.text.strip())
+        # D4: neutralize fence tokens + injection markers in untrusted book text before it
+        # enters this labeled block — a chunk can be read, but it cannot close the fence or
+        # issue instructions.
+        lines.append(context_guard.neutralize(ch.text.strip()))
         lines.append("")
     lines.append("</BOOK_CONTEXT>")
     return "\n".join(lines)
