@@ -20,7 +20,7 @@
 | 8 | DONE | high/M/med | Self-improve 'frozen invariants' gate is substring-presence only, so a behavior-changing persona edit that keeps every marker passes and is committed live | `dr_alex/improve.py:171` |
 | 9 | DONE | high/S/low | Per-turn telemetry recomputes system_prompt() from disk instead of reusing the built prompt — and hashes the WRONG prompt on the alexd memory-augmented path | `dr_alex/engine.py:297` |
 | 10 | DONE | med/S/low | alexd debounce timer-flush silently discards buffered fragments via a no-op flush callback | `dr_alex/alexd.py:98` |
-| 11 | TODO | high/S/low | Operational env vars and four privacy kill-switches are undocumented (no central reference, no .env.example) | `dr_alex/config.py:32` |
+| 11 | DONE | high/S/low | Operational env vars and four privacy kill-switches are undocumented (no central reference, no .env.example) | `dr_alex/config.py:32` |
 | 12 | TODO | high/S/low | Dead code: llm._extract_text is unused by production and its docstring misdescribes how alexd streams | `dr_alex/llm.py:260` |
 | 13 | TODO | high/S/low | Time/IST handling duplicated across ~6 modules with two separate IST constants | `dr_alex/reorient.py:24 (+ statedb.py:35)` |
 | 14 | TODO | high/M/low | No top-level README / getting-started for the main application | `dr_alex/cli.py:1` |
@@ -93,7 +93,7 @@
 - **Fix:** Give the buffer a real flush callback that delivers/queues the coalesced turn on timer expiry, OR disable the timer path in the alexd integration so buffered fragments are released only by the explicit final flush_now, never dropped by the timer.
 
 ### #11 — Operational env vars and four privacy kill-switches are undocumented (no central reference, no .env.example)
-- **Status:** TODO
+- **Status:** DONE
 - **Location:** `dr_alex/config.py:32`  ·  **Category:** dx-docs  ·  conf high / effort S / fix-risk low
 - **Impact:** ~20 DR_ALEX_* vars are private constants scattered across config.py/statedb.py/memstore.py/notion.py/voice.py/llm.py etc. config.toml documents TOML keys but never the env overrides or the *_OFF kill-
 - **Fix:** Add a Configuration/Environment section (README or CONFIG.md) enumerating every DR_ALEX_* var, default, and effect, grouping the *_OFF kill-switches prominently; optionally ship a commented .env.example. No code change.
