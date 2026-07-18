@@ -63,6 +63,16 @@ def test_recall_argv_uses_dr_alex_identity_and_high_ceiling(monkeypatch) -> None
     assert hits[0].sensitivity == "high"
 
 
+def test_launcher_uses_no_sync_before_the_subcommand(monkeypatch) -> None:
+    # D18: `uv run --no-sync` skips per-call resolution WITHOUT touching memctl args/identity.
+    calls = _capture(monkeypatch, _Proc(0, b"[]", b""))
+    memstore.recall("q", k=1)
+    argv = calls["argv"]
+    assert argv[:3] == ["uv", "run", "--no-sync"]
+    # The flag is uv's own: it appears before the `memctl` subcommand and the identity args.
+    assert argv.index("--no-sync") < argv.index("memctl") < argv.index("--client")
+
+
 def test_recall_degrades_to_empty_on_nonzero_exit(monkeypatch) -> None:
     _capture(monkeypatch, _Proc(10, b"", b"refused"))
     assert memstore.recall("x") == []
