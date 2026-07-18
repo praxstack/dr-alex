@@ -78,14 +78,24 @@ def _memctl_project() -> str:
     return os.path.join(agent_memory_root(), "tools", "memctl")
 
 
+# ``--no-sync`` skips uv's per-call lockfile-resolution + venv-sync check on every spawn (D18).
+# recall sits on the path to first phone response, and the fan-out spawns one memctl per durable
+# learning, so this shaves a real cold-start cost off each call. The memctl tool environment is
+# a persistent install Dr. Alex already depends on; if it were ever unsynced, memctl would be
+# broken regardless, and the call degrades to the existing honest-emptiness / logged-write-error
+# path. This flag is uv's own (before the memctl/python subcommand) — it touches NO memctl arg,
+# the ``--client dr-alex`` launch identity, or the capability gate (checked in Python pre-spawn).
+_UV_PREFIX = ["uv", "run", "--no-sync", "--project"]
+
+
 def _launcher() -> list[str]:
     """The argv prefix that runs ``memctl`` (uv resolves the memctl project's own venv)."""
-    return ["uv", "run", "--project", _memctl_project(), "memctl"]
+    return [*_UV_PREFIX, _memctl_project(), "memctl"]
 
 
 def _python_launcher() -> list[str]:
     """argv prefix to run Python inside the memctl project (for the store's scrub)."""
-    return ["uv", "run", "--project", _memctl_project(), "python"]
+    return [*_UV_PREFIX, _memctl_project(), "python"]
 
 
 # ---------------------------------------------------------------------------

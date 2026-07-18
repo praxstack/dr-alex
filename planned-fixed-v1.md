@@ -27,7 +27,7 @@
 | 15 | DONE | med/S/low | No dev/agent-facing AGENTS.md or CLAUDE.md in a repo built and self-modified by agents | `dr_alex/improve.py:35` |
 | 16 | DONE | high/S/med | No linter, formatter, or type-checker for a safety-critical codebase | `pyproject.toml:53` |
 | 17 | DONE | high/S/med | statedb._connect re-applies the full 8-table schema on every single DB operation | `dr_alex/statedb.py:187` |
-| 18 | TODO | med/M/med | memctl recall/remember/scrub each cold-spawn `uv run`; session-end fan-out spawns one subprocess per durable learning | `dr_alex/memstore.py:83` |
+| 18 | DONE | med/M/med | memctl recall/remember/scrub each cold-spawn `uv run`; session-end fan-out spawns one subprocess per durable learning | `dr_alex/memstore.py:83` |
 | 19 | TODO | high/S/low | The Room PWA shell is served with no Content-Security-Policy or response-hardening headers | `dr_alex/alexd.py:216` |
 
 ## Detail + fix approach
@@ -135,7 +135,18 @@
 - **Fix:** Apply the schema once (init_db on first use, or gate executescript behind a PRAGMA user_version check / module-level _initialized flag) so routine reads/writes skip the CREATE-TABLE script; optionally reuse a single connection.
 
 ### #18 — memctl recall/remember/scrub each cold-spawn `uv run`; session-end fan-out spawns one subprocess per durable learning
-- **Status:** TODO
+- **Status:** DONE (partial — see note)
+- **Done:** Added `uv run --no-sync` to both launchers (`_launcher`, `_python_launcher`) so every
+  memctl/scrub spawn skips uv's per-call lockfile-resolution + venv-sync check. This is uv's own
+  flag, placed before the subcommand, so it touches NO memctl arg, the `--client dr-alex` launch
+  identity, or the capability gate (checked in Python pre-spawn). Worst case (an unsynced tool env,
+  which would break memctl regardless) degrades to the existing honest-emptiness / logged-write-error
+  path. Test: `test_launcher_uses_no_sync_before_the_subcommand`.
+- **Deferred (intentionally):** the fan-out per-learning bulk-collapse. It depends on a memctl
+  `--bulk` write mode I could not verify exists in this external, CLI-only store, and each
+  `remember` carries its own stdin body + store-side scrub — collapsing them risks the one-fact-per-
+  memory + scrub-on-write semantics (MED risk). Left as-is rather than break the write contract on an
+  unverified assumption; the `--no-sync` change already removes the dominant per-spawn cost.
 - **Location:** `dr_alex/memstore.py:83`  ·  **Category:** performance  ·  conf med / effort M / fix-risk med
 - **Impact:** _launcher() returns ['uv','run','--project',...,'memctl'] with no --no-sync/--frozen, so uv does a lockfile/venv sync check + fresh interpreter start on every call. recall runs on the path to first pe
 - **Fix:** Add --no-sync (or --frozen) to the uv launcher to skip per-call resolution, and collapse the fan-out's per-learning writes into one memctl bulk invocation (the store's write kernel has a --bulk mode). Keeps the memctl-CLI-only contract intact.
