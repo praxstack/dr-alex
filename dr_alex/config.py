@@ -9,6 +9,49 @@ Resolution order for each value (first wins):
     1. an environment variable (handy for a single session / tests)
     2. ``config.toml`` at the repo/install root
     3. the built-in default
+
+Central environment-variable reference (single source of truth — every ``DR_ALEX_*`` var
+lives here so operators and the self-improve loop share one map). All boolean switches read
+truthy as one of ``1/true/yes/on`` (case-insensitive); anything else is falsy.
+
+PRIVACY KILL-SWITCHES (set truthy to disable a subsystem; each fails safe to OFF/degraded):
+    DR_ALEX_TELEMETRY_OFF   Disable the entire ``state.db`` telemetry store. Every read/write
+                            degrades to a no-op/empty result — no mood chips, traces, or
+                            transcripts are persisted. (statedb.telemetry_enabled)
+    DR_ALEX_MEMORY_OFF      Disable the durable memory store — degrade to Phase-2 behaviour
+                            (no recall, no session-end remember/scrub). (memstore.memory_enabled)
+    DR_ALEX_NOTION_OFF      Disable the Notion mirror. Note: Notion is OPT-IN — this var only
+                            forces it off; ``is_enabled`` also requires config + a token.
+                            (notion)
+    DR_ALEX_VOICE_OFF       Disable local press-to-talk voice capture/transcription entirely.
+                            (voice.voice_enabled)
+
+BEHAVIOUR / REGISTER:
+    DR_ALEX_CRISIS_CARD_STYLE   ``full`` (default, safe fallback) | ``graded``. Also settable
+                                via ``[safety] crisis_card_style``. (config.crisis_card_style)
+    DR_ALEX_NOTION_DETAIL       ``summary`` (default) | ``structured`` | ``full`` — Notion
+                                mirror detail dial. Also ``[notion] detail_level``.
+    DR_ALEX_TEST_TRAFFIC        Truthy marks the session as synthetic/test traffic so its
+                                turns are tagged and excluded from real-signal rollups.
+
+MODEL / BINARY:
+    DR_ALEX_MODEL       Override the Claude model id used for turns + recorded as
+                        ``model_version`` telemetry. (llm, telemetry)
+    DR_ALEX_CLAUDE_BIN  Path to the ``claude`` CLI binary (default: resolve on PATH). (llm)
+
+PATHS / STORAGE (all default under the install root; override for tests or a vault migration):
+    DR_ALEX_STATE_DB          ``state.db`` location (default ``<data>/state.db``). (statedb)
+    DR_ALEX_ACTIVE_FILE       Canonical Active File path (council D4; the PraxVault migration
+                              point). Also ``[records] active_file``. (config.active_file_path)
+    DR_ALEX_RECORDS_DIR       0700 records dir holding the Active File. Also ``[records] dir``.
+    DR_ALEX_EXPORTS_DIR       0700 dir for date-ranged exports. Also ``[exports] dir``.
+    DR_ALEX_PAIRING_DB        Device-pairing token db location. (pairing)
+    DR_ALEX_CHECKIN_STATE     Nightly check-in state file location. (checkin)
+    DR_ALEX_AGENT_MEMORY_ROOT Root of the durable agent-memory store. (memstore)
+    DR_ALEX_AUDIO_TMP         Scratch dir for transient voice audio. (voice)
+
+See README.md / AGENTS.md for the operator-facing summary; this docstring is the authoritative
+list. When you add a new ``DR_ALEX_*`` var, add it here.
 """
 
 from __future__ import annotations
