@@ -211,6 +211,28 @@ def test_turn_fragment_is_buffered_then_coalesced(client, monkeypatch) -> None:
     assert seen["text"] == "I keep\ncircling the same worry"
 
 
+def test_timer_flushed_fragment_is_not_dropped(client, monkeypatch) -> None:
+    # D10: if the debounce window times out before the final message arrives, the buffered
+    # fragment must survive (via the session's pending buffer), not vanish into a no-op.
+    seen = {"text": None}
+
+    def _gen(messages, tier, **kwargs):
+        seen["text"] = messages[-1].content
+        return llm.LLMResult(ok=True, text="okay.", tier=tier)
+    monkeypatch.setattr(llm, "generate", _gen)
+    token = _pair(client)
+    sid = client.post("/session/start", json={}, headers=_auth(token)).json()["session_id"]
+    r1 = client.post("/turn", json={"session_id": sid, "text": "I keep", "fragment": True}, headers=_auth(token))
+    assert _sse_events(r1.text)[0]["type"] == "buffered"
+    # Simulate the 4s debounce window elapsing (timer flush) BEFORE the final fragment.
+    alexd._sessions[sid].debounce._on_timer(sid)
+    assert seen["text"] is None  # not delivered yet, but retained
+    # The next message folds the timer-flushed fragment back in — nothing lost.
+    r2 = client.post("/turn", json={"session_id": sid, "text": "circling the same worry"}, headers=_auth(token))
+    assert _sse_events(r2.text)[-1]["type"] == "done"
+    assert seen["text"] == "I keep\ncircling the same worry"
+
+
 def test_crisis_fragment_bypasses_debounce_and_fires_immediately(client, monkeypatch) -> None:
     """D6: a RED fragment must NEVER wait in the debounce buffer — it bypasses via the real
     crisis_prescreen wiring and streams the crisis card immediately, with no model call."""

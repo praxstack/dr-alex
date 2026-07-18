@@ -25,6 +25,7 @@ import logging
 import mimetypes
 import os
 import signal
+import threading as _threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -95,7 +96,28 @@ class RoomSession:
         self.started_at = _iso_now()
         self.test_traffic = test_traffic
         self.mood_phase = "open"
-        self.debounce = _debounce.DebounceBuffer(flush_callback=lambda _p: None)
+        # Coalesced fragments that a timer/cap flush produced with no live request to stream
+        # them back. They are NOT dropped — the next /turn prepends them so the buffered
+        # thought still reaches one considered turn (D10). Guarded: the flush callback fires
+        # from the debounce timer thread.
+        self._pending_coalesced: list[str] = []
+        self._pending_lock = _threading.Lock()
+        self.debounce = _debounce.DebounceBuffer(flush_callback=self._absorb_flush)
+
+    def _absorb_flush(self, payload: "_debounce.FlushPayload") -> None:
+        """Timer/cap flush handoff: retain the coalesced text instead of discarding it (D10)."""
+        if payload.text:
+            with self._pending_lock:
+                self._pending_coalesced.append(payload.text)
+
+    def take_pending(self) -> str:
+        """Drain and join any coalesced-but-undelivered fragments (empty string if none)."""
+        with self._pending_lock:
+            if not self._pending_coalesced:
+                return ""
+            text = "\n".join(self._pending_coalesced)
+            self._pending_coalesced.clear()
+            return text
 
     def assemble_memory(self) -> None:
         """Best-effort session-start memory (G20). Degrades to the base prompt on any error."""
@@ -340,8 +362,12 @@ def create_app() -> FastAPI:
 
         # Final fragment (or a lone message, or a crisis bypass): coalesce any buffered
         # fragments for this session, then run ONE considered turn on the joined text.
+        # Also fold in any earlier timer/cap-flushed fragments that had no live request
+        # to stream them (D10 — never silently dropped).
         buffered = sess.debounce.flush_now(sess.session_id)
-        coalesced = f"{buffered.text}\n{text}".strip() if buffered and buffered.text else text
+        parts = [p for p in (sess.take_pending(),
+                             buffered.text if buffered else "", text) if p]
+        coalesced = "\n".join(parts).strip()
 
         if not coalesced.strip():
             async def _empty():
