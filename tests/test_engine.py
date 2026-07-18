@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dr_alex import engine, llm
+from dr_alex import engine, llm, statedb, telemetry
 from safety.triage import Tier
 
 
@@ -42,6 +42,37 @@ def test_amber_oneshot_passes_amber_tier(monkeypatch) -> None:
     tier, _ = engine.respond_oneshot("I feel hopeless and worthless")
     assert tier is Tier.AMBER
     assert seen["tier"] is Tier.AMBER
+
+
+def test_telemetry_hashes_built_prompt_without_extra_disk_read(monkeypatch) -> None:
+    # D9: run_turn must hash the already-built (memory-augmented) prompt handed in via
+    # system_prompt_override, and must NOT re-read persona/continuity from disk per turn.
+    captured = {}
+
+    def fake_trace(**k):
+        captured["prompt_hash"] = k["prompt_hash"]
+
+    monkeypatch.setattr(statedb, "record_turn_trace", fake_trace)
+    monkeypatch.setattr(statedb, "record_transcript", lambda **k: None)
+
+    def no_disk():  # pragma: no cover - fires only on the regression
+        raise AssertionError("system_prompt() re-read disk during telemetry")
+
+    monkeypatch.setattr(engine, "system_prompt", no_disk)
+    monkeypatch.setattr(
+        llm, "generate",
+        lambda messages, tier, **k: llm.LLMResult(ok=True, text="warm reply", tier=tier),
+    )
+
+    used_prompt = "MEMORY-AUGMENTED-PROMPT-xyz"
+    out = engine.run_turn(
+        "I made some progress on housing today",
+        system_prompt_override=used_prompt,
+    )
+    assert out.tier is Tier.GREEN
+    assert captured["prompt_hash"] == telemetry.prompt_hash(
+        used_prompt, "I made some progress on housing today"
+    )
 
 
 def test_red_response_text_is_pure_card() -> None:

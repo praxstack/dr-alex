@@ -286,6 +286,7 @@ def record_turn_telemetry(
     outcome: gates.GateOutcome | None,
     safety_action: str,
     now: datetime | None = None,
+    built_prompt: str | None = None,
 ) -> None:
     """Persist the G9 turn trace + encrypted transcript, and flag an empty-reply malfunction.
 
@@ -293,12 +294,16 @@ def record_turn_telemetry(
     ``model_version`` + ``prompt_hash`` + ``is_test_traffic`` and enum actions (G9/R3); the
     transcript bodies are Fernet-encrypted before they touch disk (D2). Never raises.
     """
+    # Reuse the already-built (possibly memory-augmented) prompt for the hash rather than
+    # re-reading persona/continuity from disk and hashing the WRONG prompt (D9). Only fall
+    # back to a fresh build when a caller did not supply one.
+    sp = built_prompt if built_prompt is not None else system_prompt()
     try:
         statedb.record_turn_trace(
             session_id=session_id,
             tier=tier.value,
             model_version=telemetry.model_version(),
-            prompt_hash=telemetry.prompt_hash(system_prompt(), user_text),
+            prompt_hash=telemetry.prompt_hash(sp, user_text),
             is_test_traffic=telemetry.is_test_traffic(),
             safety_action=safety_action,
             dependency_action=outcome.dependency_action if outcome else "clean",
@@ -382,6 +387,7 @@ def run_turn(
         record_turn_telemetry(
             session_id=session_id, tier=tier, user_text=user_text, reply_text=red_text,
             outcome=None, safety_action="red-card", now=now,
+            built_prompt=system_prompt_override,
         )
         return TurnOutcome(tier=tier, text=red_text, safety_action="red-card")
 
@@ -436,7 +442,7 @@ def run_turn(
     trace_turn(tier, retrieved, outcome, safety_action)  # STEP 5
     record_turn_telemetry(
         session_id=session_id, tier=tier, user_text=user_text, reply_text=outcome.text,
-        outcome=outcome, safety_action=safety_action, now=now,
+        outcome=outcome, safety_action=safety_action, now=now, built_prompt=sp,
     )
     return TurnOutcome(
         tier=tier,
