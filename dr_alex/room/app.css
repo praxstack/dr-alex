@@ -174,7 +174,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   background: var(--surface-2); padding: 2px 6px; border-radius: 6px; font-size: 0.85em;
 }
 .pair-input {
-  width: 100%; text-align: center; letter-spacing: 0.18em; text-transform: uppercase;
+  width: 100%; text-align: center; letter-spacing: 0.3em; text-transform: uppercase;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 1.25rem; padding: 12px; margin-bottom: 14px;
   border: 1px solid var(--border); border-radius: 10px;
   background: var(--bg); color: var(--text);
