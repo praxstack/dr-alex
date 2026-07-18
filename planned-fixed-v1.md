@@ -19,7 +19,7 @@
 | 7 | DONE | high/S/low | Golden crisis corpus's 71 non-RED cases are loaded but never asserted — only RED recall is gated, so false-positive regressions pass silently | `dr_alex/improve.py:210` |
 | 8 | DONE | high/M/med | Self-improve 'frozen invariants' gate is substring-presence only, so a behavior-changing persona edit that keeps every marker passes and is committed live | `dr_alex/improve.py:171` |
 | 9 | DONE | high/S/low | Per-turn telemetry recomputes system_prompt() from disk instead of reusing the built prompt — and hashes the WRONG prompt on the alexd memory-augmented path | `dr_alex/engine.py:297` |
-| 10 | TODO | med/S/low | alexd debounce timer-flush silently discards buffered fragments via a no-op flush callback | `dr_alex/alexd.py:98` |
+| 10 | DONE | med/S/low | alexd debounce timer-flush silently discards buffered fragments via a no-op flush callback | `dr_alex/alexd.py:98` |
 | 11 | TODO | high/S/low | Operational env vars and four privacy kill-switches are undocumented (no central reference, no .env.example) | `dr_alex/config.py:32` |
 | 12 | TODO | high/S/low | Dead code: llm._extract_text is unused by production and its docstring misdescribes how alexd streams | `dr_alex/llm.py:260` |
 | 13 | TODO | high/S/low | Time/IST handling duplicated across ~6 modules with two separate IST constants | `dr_alex/reorient.py:24 (+ statedb.py:35)` |
@@ -87,7 +87,7 @@
 - **Fix:** Thread `sp` into record_turn_telemetry (add a system_prompt param) and hash that, mirroring app.py — removes the double read and makes prompt_hash reflect the real (possibly memory-augmented) prompt.
 
 ### #10 — alexd debounce timer-flush silently discards buffered fragments via a no-op flush callback
-- **Status:** TODO
+- **Status:** DONE
 - **Location:** `dr_alex/alexd.py:98`  ·  **Category:** correctness  ·  conf med / effort S / fix-risk low
 - **Impact:** RoomSession builds DebounceBuffer(flush_callback=lambda _p: None). A fragment push arms a 4s timer; when it fires, _on_timer -> _fire(TIMER) -> the no-op -> _finish clears the buffer. Coalesced text i
 - **Fix:** Give the buffer a real flush callback that delivers/queues the coalesced turn on timer expiry, OR disable the timer path in the alexd integration so buffered fragments are released only by the explicit final flush_now, never dropped by the timer.
