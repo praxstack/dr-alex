@@ -151,18 +151,62 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text.lower().replace("’", "'")).strip()
 
 
+# Frozen safety SECTIONS (D8) — identified by a stable, normalized substring of their level-2
+# markdown header. Their BODIES must be byte-identical between the current persona and any
+# candidate: a marker-preserving reword INSIDE one of these is a behavior change and is
+# rejected. The SAFETY section body spans its ### subsections (crisis card + crisis-questioning
+# rules), so those are frozen too. Each body runs from the header to the next `---` / `## `.
+_FROZEN_SECTION_ANCHORS: tuple[str, ...] = (
+    "the boundary contract",
+    "anti-sycophancy / anti-dependency contract",
+    "strictcitations",
+    "safety — pinned, always present",
+)
+
+
+def _extract_section_body(persona: str, anchor: str) -> str | None:
+    """Return the raw body of the frozen section whose header contains ``anchor``, or None.
+
+    Body = every line after the header up to (excluding) the next horizontal rule (``---``)
+    or the next level-2 header — i.e. the whole section including any ``###`` subsections.
+    """
+    lines = persona.splitlines()
+    start = None
+    for i, ln in enumerate(lines):
+        if ln.startswith("## ") and anchor in _normalize(ln):
+            start = i
+            break
+    if start is None:
+        return None
+    body: list[str] = []
+    for ln in lines[start + 1:]:
+        if ln.strip() == "---" or ln.startswith("## "):
+            break
+        body.append(ln)
+    return "\n".join(body).strip("\n")
+
+
 @dataclass
 class InvariantReport:
     passed: bool
     results: dict[str, bool] = field(default_factory=dict)
     missing_markers: dict[str, list[str]] = field(default_factory=dict)
+    #: Frozen sections whose body changed vs baseline (or went missing) — D8 integrity check.
+    changed_sections: list[str] = field(default_factory=list)
 
 
-def check_frozen_invariants(persona: str) -> InvariantReport:
-    """Deterministic checklist: every frozen safety invariant must survive verbatim/semantically.
+def check_frozen_invariants(persona: str, baseline: str | None = None) -> InvariantReport:
+    """Deterministic checklist: every frozen safety invariant must survive intact.
 
-    Returns per-invariant pass/fail plus the specific markers that went missing. ``passed``
-    is True only if EVERY invariant is intact.
+    Two layers:
+      * **Marker presence** — the candidate must still contain every required safety marker.
+      * **Section integrity (D8)** — when ``baseline`` is given, each frozen safety SECTION's
+        body must be BYTE-IDENTICAL between baseline and candidate. This catches a
+        behavior-changing edit that reworded text INSIDE a frozen section while keeping the
+        header marker (which the presence-only check would wave through).
+
+    ``passed`` is True only if EVERY invariant marker is present AND (when a baseline is
+    supplied) no frozen section body changed.
     """
     norm = _normalize(persona)
     results: dict[str, bool] = {}
@@ -172,7 +216,20 @@ def check_frozen_invariants(persona: str) -> InvariantReport:
         results[name] = not gone
         if gone:
             missing[name] = gone
-    return InvariantReport(passed=all(results.values()), results=results, missing_markers=missing)
+
+    changed: list[str] = []
+    if baseline is not None:
+        for anchor in _FROZEN_SECTION_ANCHORS:
+            base_body = _extract_section_body(baseline, anchor)
+            cand_body = _extract_section_body(persona, anchor)
+            # A frozen section that vanished, moved out of reach, or had its body edited fails.
+            if base_body is not None and cand_body != base_body:
+                changed.append(anchor)
+
+    passed = all(results.values()) and not changed
+    return InvariantReport(
+        passed=passed, results=results, missing_markers=missing, changed_sections=changed,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -257,9 +314,14 @@ class SafetyGate:
     golden: GoldenReport
 
 
-def run_safety_gate(candidate: str, root: Path) -> SafetyGate:
-    """The full deterministic gate: frozen invariants AND golden RED sensitivity."""
-    inv = check_frozen_invariants(candidate)
+def run_safety_gate(candidate: str, root: Path, baseline: str | None = None) -> SafetyGate:
+    """The full deterministic gate: frozen invariants AND golden RED sensitivity.
+
+    ``baseline`` (the current on-disk persona) enables the D8 section-integrity check — a
+    candidate that reworded a frozen safety section's body is rejected even if every marker
+    string is still present.
+    """
+    inv = check_frozen_invariants(candidate, baseline=baseline)
     golden = check_golden_red_sensitivity(root)
     return SafetyGate(passed=inv.passed and golden.passed, invariants=inv, golden=golden)
 
@@ -485,6 +547,8 @@ def _decide(gate: SafetyGate, bench: BenchResult) -> tuple[bool, str]:
     """KEEP only if the safety gate passed AND the relative trend held within noise."""
     if not gate.passed:
         bad = [k for k, v in gate.invariants.results.items() if not v]
+        for anchor in gate.invariants.changed_sections:
+            bad.append(f"frozen_section_changed[{anchor}]")
         if not gate.golden.passed:
             bad.append(f"golden_red_sensitivity={gate.golden.sensitivity:.0%}")
         return False, "safety gate FAILED: " + ", ".join(bad or ["unknown"])
@@ -663,7 +727,7 @@ def run_once(
                       summary=edit.summary)
 
     # 2. HARD SAFETY GATE ---------------------------------------------------
-    gate = run_safety_gate(candidate, root)
+    gate = run_safety_gate(candidate, root, baseline=baseline)
     if not gate.passed:
         _, reason = _decide(gate, BenchResult(ok=False, baseline_mean=None,
                                               candidate_mean=None, n=len(prompts)))
