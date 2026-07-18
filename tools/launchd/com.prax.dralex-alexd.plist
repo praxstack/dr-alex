@@ -1,75 +1,44 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  alexd (The Room) — LaunchAgent. DISABLED BY DEFAULT (council + graft-pack gardener pattern).
-
-  Shipped intentionally inert: `Disabled` is true and it is NOT loaded. alexd binds ONLY
-  127.0.0.1:8787 (loopback hard-assert refuses anything else — council D3 rider 1). The phone
-  reaches it over Tailscale (`tools/tailscale-setup.sh`), never by widening this bind.
-
-  KeepAlive watchdog (graft-pack G16): if alexd crashes it is restarted, but with a grace so a
-  post-boot / post-wake settle isn't mistaken for a fault:
-    - boot-grace  240s  (DRALEX_BOOT_GRACE) — after a cold boot, allow the machine to settle
-                        before the health watchdog treats a not-yet-listening alexd as down.
-    - wake-grace  120s  (DRALEX_WAKE_GRACE) — after wake-from-sleep, same idea, shorter.
-  launchd itself only knows KeepAlive + ThrottleInterval; the grace windows are exported as
-  environment variables for the health check to honor (they must never trigger a false alarm).
-
-  To ENABLE (one command — you, deliberately):
-      cp tools/launchd/com.prax.dralex-alexd.plist ~/Library/LaunchAgents/ \
-        && launchctl load -w ~/Library/LaunchAgents/com.prax.dralex-alexd.plist
-
-  To DISABLE again:
-      launchctl unload -w ~/Library/LaunchAgents/com.prax.dralex-alexd.plist
-
-  Edit ProgramArguments to your installed `dr-alex` path and WorkingDirectory to your checkout
-  before enabling.
--->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>Label</key>
-    <string>com.prax.dralex-alexd</string>
-
-    <key>Disabled</key>
-    <true/>
-
-    <key>ProgramArguments</key>
-    <array>
-        <string>/bin/sh</string>
-        <string>-lc</string>
-        <string>exec dr-alex serve</string>
-    </array>
-
-    <key>WorkingDirectory</key>
-    <string>REPLACE_WITH_YOUR/dr-alex</string>
-
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>DRALEX_BOOT_GRACE</key>
-        <string>240</string>
-        <key>DRALEX_WAKE_GRACE</key>
-        <string>120</string>
-    </dict>
-
-    <!-- Watchdog: restart on crash, but don't thrash. RunAtLoad false so nothing starts until
-         you deliberately load it. -->
-    <key>KeepAlive</key>
-    <dict>
-        <key>SuccessfulExit</key>
-        <false/>
-        <key>Crashed</key>
-        <true/>
-    </dict>
-    <key>ThrottleInterval</key>
-    <integer>10</integer>
-    <key>RunAtLoad</key>
-    <false/>
-
-    <key>ProcessType</key>
-    <string>Interactive</string>
-
-    <key>StandardOutPath</key>
-    <string>/tmp/dr-alex-alexd.out.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/dr-alex-alexd.err.log</string>
+	<key>Disabled</key>
+	<true/>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>DRALEX_BOOT_GRACE</key>
+		<string>240</string>
+		<key>DRALEX_WAKE_GRACE</key>
+		<string>120</string>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/Users/prax/.local/bin:/usr/bin:/bin</string>
+	</dict>
+	<key>KeepAlive</key>
+	<dict>
+		<key>Crashed</key>
+		<true/>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>Label</key>
+	<string>com.prax.dralex-alexd</string>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/sh</string>
+		<string>-lc</string>
+		<string>exec /Users/prax/.local/bin/dr-alex serve</string>
+	</array>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardErrorPath</key>
+	<string>/tmp/dr-alex-alexd.err.log</string>
+	<key>StandardOutPath</key>
+	<string>/tmp/dr-alex-alexd.out.log</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>WorkingDirectory</key>
+	<string>/Users/prax/dr-alex</string>
 </dict>
 </plist>

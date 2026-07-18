@@ -1,67 +1,36 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  G22 nightly persona self-improvement — DISABLED BY DEFAULT (gardener / eval enable pattern).
-
-  This LaunchAgent is shipped intentionally inert: `Disabled` is true and it is NOT loaded.
-  One iteration proposes ONE small wording edit to persona/dr-alex.md, then keeps it ONLY if
-  a deterministic safety gate fully passes (every frozen safety invariant intact + golden
-  crisis RED sensitivity 100%) AND a WAI-SR relative-trend benchmark holds/improves. Anything
-  uncertain reverts. A kept change is ONE revertible git commit; logs are gitignored and carry
-  no transcript content (R3).
-
-  IMPORTANT — this needs `claude` auth, which launchd does NOT have here.
-  ────────────────────────────────────────────────────────────────────────────────────────
-  The PROPOSE and BENCHMARK/JUDGE steps are model *meta*-calls routed through the single
-  `claude` entrypoint (dr_alex/llm.py). launchd runs with a minimal environment and NO
-  interactive `claude` login, so from a bare LaunchAgent the model calls fail — and the loop,
-  biased to caution, simply REVERTS every run (no change is ever kept). It therefore does NOT
-  self-improve unattended: it only does real work when YOU enable this job in a context where
-  `claude -p` is authenticated (e.g. a logged-in user session with the CLI signed in), or when
-  you run `dr-alex improve --once` by hand. This is deliberate: a therapy AI's persona is not
-  edited autonomously without a human in the loop.
-
-  To ENABLE (one command — you, deliberately, with claude auth available):
-      cp tools/launchd/com.dr-alex.improve.plist ~/Library/LaunchAgents/ \
-        && launchctl load -w ~/Library/LaunchAgents/com.dr-alex.improve.plist
-
-  To DISABLE again:
-      launchctl unload -w ~/Library/LaunchAgents/com.dr-alex.improve.plist
-
-  Edit ProgramArguments below to your installed `dr-alex` path (e.g. the uv/venv shim) and
-  set WorkingDirectory to your ~/dr-alex checkout before enabling.
--->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>Label</key>
-    <string>com.dr-alex.improve</string>
-
-    <key>Disabled</key>
-    <true/>
-
-    <key>ProgramArguments</key>
-    <array>
-        <string>/bin/sh</string>
-        <string>-lc</string>
-        <string>dr-alex improve --once</string>
-    </array>
-
-    <key>WorkingDirectory</key>
-    <string>REPLACE_WITH_YOUR/dr-alex</string>
-
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>3</integer>
-        <key>Minute</key>
-        <integer>45</integer>
-    </dict>
-
-    <key>RunAtLoad</key>
-    <false/>
-
-    <key>StandardOutPath</key>
-    <string>/tmp/dr-alex-improve.out.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/dr-alex-improve.err.log</string>
+	<key>Disabled</key>
+	<true/>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/Users/prax/.local/bin:/usr/bin:/bin</string>
+	</dict>
+	<key>Label</key>
+	<string>com.dr-alex.improve</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/sh</string>
+		<string>-lc</string>
+		<string>dr-alex improve --once</string>
+	</array>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardErrorPath</key>
+	<string>/tmp/dr-alex-improve.err.log</string>
+	<key>StandardOutPath</key>
+	<string>/tmp/dr-alex-improve.out.log</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>3</integer>
+		<key>Minute</key>
+		<integer>45</integer>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>/Users/prax/dr-alex</string>
 </dict>
 </plist>
