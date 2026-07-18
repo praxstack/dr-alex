@@ -261,30 +261,3 @@ def stream(
         timeout=timeout, book_context=book_context, corrective=corrective,
         safety_note=safety_note,
     ).text
-
-
-def _extract_text(obj: object) -> str:
-    """Pull assistant text out of one stream-json object, best-effort.
-
-    Retained for the Phase-5 SSE surface (``alexd`` streams stream-json to the PWA); the
-    at-desk TUI path uses the non-streaming :func:`complete`.
-    """
-    if not isinstance(obj, dict):
-        return ""
-    if obj.get("type") == "result" and isinstance(obj.get("result"), str):
-        return obj["result"]
-    msg = obj.get("message")
-    if isinstance(msg, dict):
-        content = msg.get("content")
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            chunks = []
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    chunks.append(block.get("text", ""))
-            return "".join(chunks)
-    delta = obj.get("delta")
-    if isinstance(delta, dict) and isinstance(delta.get("text"), str):
-        return delta["text"]
-    return ""

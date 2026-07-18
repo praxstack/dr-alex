@@ -21,7 +21,7 @@
 | 9 | DONE | high/S/low | Per-turn telemetry recomputes system_prompt() from disk instead of reusing the built prompt — and hashes the WRONG prompt on the alexd memory-augmented path | `dr_alex/engine.py:297` |
 | 10 | DONE | med/S/low | alexd debounce timer-flush silently discards buffered fragments via a no-op flush callback | `dr_alex/alexd.py:98` |
 | 11 | DONE | high/S/low | Operational env vars and four privacy kill-switches are undocumented (no central reference, no .env.example) | `dr_alex/config.py:32` |
-| 12 | TODO | high/S/low | Dead code: llm._extract_text is unused by production and its docstring misdescribes how alexd streams | `dr_alex/llm.py:260` |
+| 12 | DONE | high/S/low | Dead code: llm._extract_text is unused by production and its docstring misdescribes how alexd streams | `dr_alex/llm.py:260` |
 | 13 | TODO | high/S/low | Time/IST handling duplicated across ~6 modules with two separate IST constants | `dr_alex/reorient.py:24 (+ statedb.py:35)` |
 | 14 | TODO | high/M/low | No top-level README / getting-started for the main application | `dr_alex/cli.py:1` |
 | 15 | TODO | med/S/low | No dev/agent-facing AGENTS.md or CLAUDE.md in a repo built and self-modified by agents | `dr_alex/improve.py:35` |
@@ -99,7 +99,7 @@
 - **Fix:** Add a Configuration/Environment section (README or CONFIG.md) enumerating every DR_ALEX_* var, default, and effect, grouping the *_OFF kill-switches prominently; optionally ship a commented .env.example. No code change.
 
 ### #12 — Dead code: llm._extract_text is unused by production and its docstring misdescribes how alexd streams
-- **Status:** TODO
+- **Status:** DONE
 - **Location:** `dr_alex/llm.py:260`  ·  **Category:** tech-debt  ·  conf high / effort S / fix-risk low
 - **Impact:** _extract_text parses Claude stream-json and is referenced only by tests — zero production callers. Its docstring claims it is 'Retained for the Phase-5 SSE surface (alexd streams stream-json to the PW
 - **Fix:** Delete _extract_text and its test, or if kept for a future streaming plan, correct the docstring to state it is currently unused and drop the false claim that alexd consumes stream-json.
