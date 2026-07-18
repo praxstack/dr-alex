@@ -27,6 +27,7 @@ from dr_alex import (
     statedb,
     statefile,
     telemetry,
+    timeutil,
 )
 from dr_alex.session import SessionState
 from dr_alex.widgets import HomeworkScreen, MoodBar, rail_data, render_rail
@@ -38,7 +39,7 @@ _log = logging.getLogger("dr_alex.app")
 
 
 def _iso_now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return timeutil.now_iso()
 
 PERSONA_TITLE = "Dr. Alex Morgan"
 PERSONA_SUBTITLE = "support between your sessions with Shreya"

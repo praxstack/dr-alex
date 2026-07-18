@@ -22,7 +22,7 @@
 | 10 | DONE | med/S/low | alexd debounce timer-flush silently discards buffered fragments via a no-op flush callback | `dr_alex/alexd.py:98` |
 | 11 | DONE | high/S/low | Operational env vars and four privacy kill-switches are undocumented (no central reference, no .env.example) | `dr_alex/config.py:32` |
 | 12 | DONE | high/S/low | Dead code: llm._extract_text is unused by production and its docstring misdescribes how alexd streams | `dr_alex/llm.py:260` |
-| 13 | TODO | high/S/low | Time/IST handling duplicated across ~6 modules with two separate IST constants | `dr_alex/reorient.py:24 (+ statedb.py:35)` |
+| 13 | DONE | high/S/low | Time/IST handling duplicated across ~6 modules with two separate IST constants | `dr_alex/reorient.py:24 (+ statedb.py:35)` |
 | 14 | TODO | high/M/low | No top-level README / getting-started for the main application | `dr_alex/cli.py:1` |
 | 15 | TODO | med/S/low | No dev/agent-facing AGENTS.md or CLAUDE.md in a repo built and self-modified by agents | `dr_alex/improve.py:35` |
 | 16 | TODO | high/S/med | No linter, formatter, or type-checker for a safety-critical codebase | `pyproject.toml:53` |
@@ -105,7 +105,7 @@
 - **Fix:** Delete _extract_text and its test, or if kept for a future streaming plan, correct the docstring to state it is currently unused and drop the false claim that alexd consumes stream-json.
 
 ### #13 — Time/IST handling duplicated across ~6 modules with two separate IST constants
-- **Status:** TODO
+- **Status:** DONE
 - **Location:** `dr_alex/reorient.py:24 (+ statedb.py:35)`  ·  **Category:** tech-debt  ·  conf high / effort S / fix-risk low
 - **Impact:** IST=ZoneInfo('Asia/Kolkata') is defined twice (reorient.py:24, statedb.py:35) and per-module now/format helpers are re-rolled (app.py:38, statedb.py:71/77, reorient.py:30, pairing.py:96). IST/timestam
 - **Fix:** Introduce one dr_alex/timeutil.py exporting IST, now_utc, now_iso, to_ist; have statedb/reorient/export/widgets/pairing/app import from it; delete the duplicate constant and per-module helpers.

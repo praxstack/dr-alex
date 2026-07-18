@@ -26,13 +26,10 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from zoneinfo import ZoneInfo
-
-from dr_alex import crypto, ulid
+from dr_alex import crypto, timeutil, ulid
+from dr_alex.timeutil import IST  # re-exported: exporters import IST from statedb (D13)
 
 _log = logging.getLogger("dr_alex.statedb")
-
-IST = ZoneInfo("Asia/Kolkata")
 
 _STATE_DB_ENV = "DR_ALEX_STATE_DB"
 _TELEMETRY_OFF_ENV = "DR_ALEX_TELEMETRY_OFF"
@@ -69,15 +66,11 @@ def state_db_path() -> Path:
 
 
 def _now_iso(now: _dt.datetime | None = None) -> str:
-    dt = now or _dt.datetime.now(_dt.timezone.utc)
-    dt = dt.astimezone(_dt.timezone.utc) if dt.tzinfo else dt.replace(tzinfo=_dt.timezone.utc)
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return timeutil.now_iso(now)
 
 
 def _ist(now: _dt.datetime | None = None) -> _dt.datetime:
-    dt = now or _dt.datetime.now(_dt.timezone.utc)
-    dt = dt.astimezone(_dt.timezone.utc) if dt.tzinfo else dt.replace(tzinfo=_dt.timezone.utc)
-    return dt.astimezone(IST)
+    return timeutil.to_ist(now)
 
 
 # ---------------------------------------------------------------------------

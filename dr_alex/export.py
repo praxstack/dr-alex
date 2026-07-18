@@ -27,7 +27,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from dr_alex import config, records, statedb
+from dr_alex import config, records, statedb, timeutil
 from dr_alex.statedb import IST
 
 VALID_REDACTIONS = ("summary", "full")
@@ -72,8 +72,7 @@ def _bounds(from_date: str, to_date: str) -> tuple[str, str]:
 
 
 def _iso(now: _dt.datetime) -> str:
-    dt = now.astimezone(_dt.timezone.utc) if now.tzinfo else now.replace(tzinfo=_dt.timezone.utc)
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return timeutil.now_iso(now)
 
 
 def _days_between(from_date: str, to_date: str) -> list[str]:

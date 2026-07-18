@@ -274,8 +274,8 @@ def distill(
 
 
 def _iso(now: _dt.datetime) -> str:
-    dt = now.astimezone(_dt.timezone.utc) if now.tzinfo else now.replace(tzinfo=_dt.timezone.utc)
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    from dr_alex import timeutil
+    return timeutil.now_iso(now)
 
 
 def inbox_filename(session_id: str, now: _dt.datetime) -> str:

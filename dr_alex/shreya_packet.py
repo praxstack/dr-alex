@@ -28,7 +28,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from dr_alex import config, records, statedb
+from dr_alex import config, records, statedb, timeutil
 from dr_alex.records import PatternDoc
 from dr_alex.statedb import WindowSnapshot
 
@@ -244,8 +244,7 @@ class PacketResult:
 
 
 def _iso(now: _dt.datetime) -> str:
-    dt = now.astimezone(_dt.timezone.utc) if now.tzinfo else now.replace(tzinfo=_dt.timezone.utc)
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return timeutil.now_iso(now)
 
 
 def packet_dir() -> Path:

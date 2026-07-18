@@ -28,7 +28,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from dr_alex import config
+from dr_alex import config, timeutil
 from dr_alex.digest import SessionDigest
 
 # Top-level section headers, in canonical order.
@@ -291,8 +291,7 @@ def _render_homework(digest: SessionDigest, path: Path | None) -> str:
 
 
 def _iso(now: _dt.datetime) -> str:
-    dt = now.astimezone(_dt.timezone.utc) if now.tzinfo else now.replace(tzinfo=_dt.timezone.utc)
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return timeutil.now_iso(now)
 
 
 def _assemble(
