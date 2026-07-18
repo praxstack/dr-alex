@@ -59,3 +59,8 @@ data/extracted/
 
 # Session digests handed to the gardener — clinical content, never in git (Directive 3)
 inbox/
+
+# G22 (persona self-improvement loop): the keep-or-revert audit log + changelog are derived,
+# local-only records of autonomous persona edits — never tracked (Directive 3 / R3). The
+# accepted changes live in the git history as revertible commits; these logs are metadata.
+data/improve/
