@@ -24,7 +24,7 @@
 | 12 | DONE | high/S/low | Dead code: llm._extract_text is unused by production and its docstring misdescribes how alexd streams | `dr_alex/llm.py:260` |
 | 13 | DONE | high/S/low | Time/IST handling duplicated across ~6 modules with two separate IST constants | `dr_alex/reorient.py:24 (+ statedb.py:35)` |
 | 14 | DONE | high/M/low | No top-level README / getting-started for the main application | `dr_alex/cli.py:1` |
-| 15 | TODO | med/S/low | No dev/agent-facing AGENTS.md or CLAUDE.md in a repo built and self-modified by agents | `dr_alex/improve.py:35` |
+| 15 | DONE | med/S/low | No dev/agent-facing AGENTS.md or CLAUDE.md in a repo built and self-modified by agents | `dr_alex/improve.py:35` |
 | 16 | TODO | high/S/med | No linter, formatter, or type-checker for a safety-critical codebase | `pyproject.toml:53` |
 | 17 | TODO | high/S/med | statedb._connect re-applies the full 8-table schema on every single DB operation | `dr_alex/statedb.py:187` |
 | 18 | TODO | med/M/med | memctl recall/remember/scrub each cold-spawn `uv run`; session-end fan-out spawns one subprocess per durable learning | `dr_alex/memstore.py:83` |
@@ -117,7 +117,7 @@
 - **Fix:** Add a thin top-level README.md: one-command install/run, a CLI-subcommand table (mirroring cli.py:1-29), the Keychain secret-setup block, how to enable the disabled launchd jobs, the Tailscale-only phone path, and a pointer to the mobile fallback kit — linking to authoritative inline docs rather than duplicating.
 
 ### #15 — No dev/agent-facing AGENTS.md or CLAUDE.md in a repo built and self-modified by agents
-- **Status:** TODO
+- **Status:** DONE
 - **Location:** `dr_alex/improve.py:35`  ·  **Category:** dx-docs  ·  conf med / effort S / fix-risk low
 - **Impact:** Repo root .claude/ is empty and there is no AGENTS.md/CLAUDE.md. The codebase is agent-developed and ships a nightly self-improvement loop whose PROPOSE/JUDGE steps meta-call `claude` to edit persona/
 - **Fix:** Add an AGENTS.md (or CLAUDE.md) with a one-screen architecture map, the non-negotiable safety invariants, the verify command, and the by-design tradeoffs (loopback-only, plaintext Active-File + FileVault check, self-improve disabled-by-default) so contributors and the improve-loop context share one source of truth.
