@@ -17,6 +17,10 @@ Modes
     dr-alex books status  show the corpus manifest + index state
     dr-alex backup        G19 durability: git bundle + encrypted state.db snapshot
     dr-alex eval --once   G13 nightly eval (relative drift); normally run by the (disabled) cron
+    dr-alex improve --once [--dry-run]
+                          G22 nightly persona keep-or-revert loop (propose→gate→benchmark→keep)
+    dr-alex improve status   history + last decision of the self-improvement loop
+    dr-alex improve revert   undo the last ACCEPTED persona change (git revert)
     dr-alex shreya        G11 Friday Shreya-prep packet (local draft; never sent)
     dr-alex records       show the canonical Active File path (creating the scaffold if needed)
     dr-alex notion status show whether the Notion mirror is enabled (secrets stay in Keychain)
@@ -64,6 +68,65 @@ def _eval_command(args: list[str]) -> int:
     if res.liveness_banner:
         print(f"  liveness: {res.liveness_banner}", file=sys.stderr)
     return 0
+
+
+def _improve_command(args: list[str]) -> int:
+    """`dr-alex improve --once [--dry-run] | status | revert` — the G22 keep-or-revert loop.
+
+    The launchd job (``tools/launchd/com.dr-alex.improve.plist``) ships DISABLED and needs
+    ``claude`` auth (unavailable from launchd), so this only ever runs when *you* invoke it.
+    """
+    from dr_alex import improve
+
+    sub = args[0] if args else "--once"
+
+    if sub == "status":
+        runs = improve.history()
+        if not runs:
+            print("improve: no runs yet. Try: dr-alex improve --once --dry-run")
+            return 0
+        last = runs[-1]
+        keeps = sum(1 for r in runs if r.get("decision") == "keep" and not r.get("dry_run"))
+        print(f"improve history: {len(runs)} run(s), {keeps} accepted change(s).")
+        print(f"last decision: {last.get('decision')} — {last.get('reason')}")
+        if last.get("candidate_summary"):
+            print(f"  candidate: {last['candidate_summary']}")
+        sg = last.get("safety_gate", {})
+        print(f"  safety gate passed: {sg.get('passed')}  "
+              f"(golden RED sensitivity: {sg.get('golden_red_sensitivity')})")
+        print(f"  WAI-SR baseline→candidate: {last.get('wai_sr_baseline')} → "
+              f"{last.get('wai_sr_candidate')}")
+        if last.get("commit_sha"):
+            print(f"  commit: {last['commit_sha']}")
+        return 0
+
+    if sub == "revert":
+        ok, msg = improve.revert_last()
+        print(msg, file=sys.stdout if ok else sys.stderr)
+        return 0 if ok else 1
+
+    if sub == "--once":
+        dry = "--dry-run" in args
+        try:
+            res = improve.run_once(dry_run=dry)
+        except improve.ImproveError as exc:
+            print(f"improve error: {exc}", file=sys.stderr)
+            return 1
+        tag = " [DRY-RUN]" if res.dry_run else ""
+        print(f"improve{tag}: {res.decision.upper()} — {res.reason}")
+        if res.summary:
+            print(f"  candidate: {res.summary}")
+        failed = [k for k, v in res.invariants.items() if not v]
+        print(f"  frozen invariants: {'all intact' if not failed else 'MISSING ' + ', '.join(failed)}"
+              f"  |  golden RED sensitivity: {res.golden_sensitivity}")
+        print(f"  WAI-SR baseline→candidate: {res.baseline_mean} → {res.candidate_mean}")
+        if res.commit_sha:
+            print(f"  committed: {res.commit_sha}")
+        return 0
+
+    print(f"Unknown improve subcommand: {sub!r}. Use '--once [--dry-run]', 'status', or 'revert'.",
+          file=sys.stderr)
+    return 2
 
 
 def _books_command(args: list[str]) -> int:
@@ -419,6 +482,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args and args[0] == "eval":
         return _eval_command(args[1:])
+
+    if args and args[0] == "improve":
+        return _improve_command(args[1:])
 
     if args and args[0] == "export":
         return _export_command(args[1:])

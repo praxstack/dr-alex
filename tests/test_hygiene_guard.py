@@ -30,6 +30,7 @@ _FORBIDDEN = (
     re.compile(r"(^|/)alexd\.pid$"),             # Phase 5: alexd pidfile
     re.compile(r"(^|/)user-books\.json$"),       # Phase 2b: supplemental drop-in book manifest
     re.compile(r"\.extracted\.txt$"),            # Phase 2b: derived PDF extraction caches
+    re.compile(r"^data/improve/"),               # G22: persona self-improvement audit/changelog
 )
 
 

@@ -77,6 +77,11 @@ def _spawning_functions() -> list[tuple[str, str]]:
 #   - dr_alex/voice.py::_run_whisper_cpp   — Phase 8: LOCAL whisper.cpp transcription (cloud STT
 #                                           is BANNED). Produces TEXT only; never the model, and
 #                                           the text re-enters the SAME triage-gated entrypoint.
+#   - dr_alex/improve.py::_run_git         — G22: the persona self-improvement loop's ONE git
+#                                           site (add/commit/revert of persona/dr-alex.md only —
+#                                           the single revertible keep). NEVER the model, never
+#                                           push (R1: this repo has no remote). Its propose/judge
+#                                           meta-calls route through dr_alex.llm.complete, not here.
 _SANCTIONED_SPAWNS = {
     ("dr_alex/llm.py", "complete"),
     ("dr_alex/memstore.py", "_run"),
@@ -85,6 +90,7 @@ _SANCTIONED_SPAWNS = {
     ("dr_alex/checkin.py", "_default_runner"),
     ("dr_alex/voice.py", "_spawn_ffmpeg_capture"),
     ("dr_alex/voice.py", "_run_whisper_cpp"),
+    ("dr_alex/improve.py", "_run_git"),
 }
 
 
