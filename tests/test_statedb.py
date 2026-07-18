@@ -161,3 +161,23 @@ def test_telemetry_off_is_noop(tmp_path, monkeypatch) -> None:
     assert statedb.add_homework("x", path=p) is None
     assert statedb.open_homework(path=p) == []
     assert not p.exists()  # nothing was ever created
+
+
+# --- schema applied once, not per-op (D17) ---------------------------------
+
+
+def test_schema_applied_once_via_user_version(tmp_path) -> None:
+    import sqlite3
+
+    p = _db(tmp_path)
+    statedb.init_db(p)
+    # user_version is stamped, so a second connect skips the CREATE-TABLE script.
+    with sqlite3.connect(str(p)) as c:
+        assert c.execute("PRAGMA user_version").fetchone()[0] == statedb._SCHEMA_VERSION
+        tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    # All 8 tables are present and further ops keep working (no double-apply error).
+    for t in ("sessions", "mood_events", "homework", "turn_traces", "transcripts", "notes"):
+        assert t in tables
+    statedb.record_mood("open", 5, path=p)
+    statedb.record_mood("close", 6, path=p)
+    assert statedb.open_homework(path=p) == []  # ops after the guarded schema still succeed

@@ -78,6 +78,10 @@ def _ist(now: _dt.datetime | None = None) -> _dt.datetime:
 # Schema + connection
 # ---------------------------------------------------------------------------
 
+#: Bump when ``_SCHEMA`` changes so an existing db re-applies it once (D17). PRAGMA
+#: user_version is stored in the db file, so the schema is applied once per file, not per op.
+_SCHEMA_VERSION = 1
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
     id                TEXT PRIMARY KEY,
@@ -178,7 +182,12 @@ def _connect(path: Path | None = None) -> Iterator[sqlite3.Connection]:
         except OSError:
             pass
     try:
-        conn.executescript(_SCHEMA)
+        # Apply the 8-table schema only when this db file hasn't been initialized to the
+        # current version yet — gated by PRAGMA user_version (D17). Routine reads/writes then
+        # skip the CREATE-TABLE script entirely instead of re-running it on every _connect.
+        if conn.execute("PRAGMA user_version").fetchone()[0] < _SCHEMA_VERSION:
+            conn.executescript(_SCHEMA)
+            conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
         yield conn
         conn.commit()
     finally:
