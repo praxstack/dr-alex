@@ -376,6 +376,23 @@ def create_app() -> FastAPI:
         mood = _as_mood(payload.get("mood"))
         if sess is not None and mood is not None:
             _record_mood(sess, "close", mood)
+        # D10: drain any coalesced-but-undelivered text before the session is dropped.
+        # Timer/cap flushes park fragments in ``_pending_coalesced`` with no live /turn to
+        # stream them; anything still in the debounce window is folded in too. Without this,
+        # a session that finalizes with pending fragments silently loses that thought. One
+        # final considered turn runs it through the SAME safety-first pipeline — run_turn
+        # re-triages, so a crisis leftover still routes through the RED short-circuit (the
+        # crisis bypass is preserved, not weakened).
+        if sess is not None:
+            buffered = sess.debounce.flush_now(sess.session_id)
+            leftover = "\n".join(
+                p for p in (sess.take_pending(), buffered.text if buffered else "") if p
+            ).strip()
+            if leftover:
+                try:
+                    await run_in_threadpool(_run_turn_blocking, sess, leftover)
+                except Exception:  # noqa: BLE001 — finalize must never fail on a leftover turn
+                    pass
         if sid:
             try:
                 statedb.end_session(sid)
