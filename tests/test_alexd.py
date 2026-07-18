@@ -211,6 +211,35 @@ def test_turn_fragment_is_buffered_then_coalesced(client, monkeypatch) -> None:
     assert seen["text"] == "I keep\ncircling the same worry"
 
 
+def test_crisis_fragment_bypasses_debounce_and_fires_immediately(client, monkeypatch) -> None:
+    """D6: a RED fragment must NEVER wait in the debounce buffer — it bypasses via the real
+    crisis_prescreen wiring and streams the crisis card immediately, with no model call."""
+    def boom(*a, **k):  # the model must NOT run on a RED turn
+        raise AssertionError("model must not run on a RED crisis fragment")
+    monkeypatch.setattr(llm, "generate", boom)
+
+    token = _pair(client)
+    sid = client.post("/session/start", json={}, headers=_auth(token)).json()["session_id"]
+
+    # fragment=True would normally buffer — but a crisis fragment bypasses the debounce.
+    r = client.post(
+        "/turn",
+        json={"session_id": sid, "text": "I want to kill myself", "fragment": True},
+        headers=_auth(token),
+    )
+    assert r.status_code == 200
+    events = _sse_events(r.text)
+    kinds = [e["type"] for e in events]
+    # It fired the crisis path immediately — NOT buffered.
+    assert "buffered" not in kinds
+    assert events[0]["type"] == "meta"
+    assert events[0]["crisis"] is True and events[0]["tier"] == "RED"
+    streamed = "".join(e["text"] for e in events if e["type"] == "token")
+    assert "14416" in streamed and "Shreya" in streamed
+    # Nothing was left buffered for this session.
+    assert alexd._sessions[sid].debounce.pending_count() == 0
+
+
 def test_export_review_generates_a_real_export(client) -> None:
     token = _pair(client)
     r = client.post("/export/review", json={"from": "2026-07-01", "to": "2026-07-18"},
