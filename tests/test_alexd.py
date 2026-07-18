@@ -249,6 +249,34 @@ def test_timer_flushed_fragment_is_not_dropped(client, monkeypatch) -> None:
     assert seen["text"] == "I keep\ncircling the same worry"
 
 
+def test_pending_coalesced_text_survives_finalize(client, monkeypatch) -> None:
+    # D10: if a session finalizes (/session/end) with timer/cap-flushed fragments still
+    # pending and no subsequent /turn, that text must NOT be silently dropped — it is drained
+    # into one final considered turn before the session is discarded.
+    seen = {"text": None}
+
+    def _gen(messages, tier, **kwargs):
+        seen["text"] = messages[-1].content
+        return llm.LLMResult(ok=True, text="okay.", tier=tier)
+    monkeypatch.setattr(llm, "generate", _gen)
+    token = _pair(client)
+    sid = client.post("/session/start", json={}, headers=_auth(token)).json()["session_id"]
+    r1 = client.post(
+        "/turn",
+        json={"session_id": sid, "text": "I never told anyone this", "fragment": True},
+        headers=_auth(token),
+    )
+    assert _sse_events(r1.text)[0]["type"] == "buffered"
+    # The debounce window elapses (timer flush) — the fragment is parked in the pending buffer.
+    alexd._sessions[sid].debounce._on_timer(sid)
+    assert seen["text"] is None  # nothing processed yet, but retained
+    # Ending the session drains the pending text into one final considered turn — nothing lost.
+    r2 = client.post("/session/end", json={"session_id": sid}, headers=_auth(token))
+    assert r2.status_code == 200
+    assert seen["text"] == "I never told anyone this"  # the parked thought reached a turn
+    assert sid not in alexd._sessions  # session finalized and cleaned up
+
+
 def test_crisis_fragment_bypasses_debounce_and_fires_immediately(client, monkeypatch) -> None:
     """D6: a RED fragment must NEVER wait in the debounce buffer — it bypasses via the real
     crisis_prescreen wiring and streams the crisis card immediately, with no model call."""
