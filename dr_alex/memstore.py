@@ -133,7 +133,7 @@ class Hit:
     snippet: str
 
     @classmethod
-    def from_dict(cls, d: dict) -> "Hit":
+    def from_dict(cls, d: dict) -> Hit:
         return cls(
             id=str(d.get("id", "")),
             type=str(d.get("type", "")),

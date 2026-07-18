@@ -121,7 +121,7 @@ def _already_scored(path=None) -> set[str]:
 
 def liveness(*, now: _dt.datetime | None = None, path=None) -> str | None:
     """A loud banner when the eval loop looks blind — distinct from an honest quiet week."""
-    now = now or _dt.datetime.now(_dt.timezone.utc)
+    now = now or _dt.datetime.now(_dt.UTC)
     last = statedb.last_eval_at(path=path)
     pending = [s for s in statedb.session_ids_with_transcripts(path=path) if s not in _already_scored(path)]
     if last is None:
@@ -130,7 +130,7 @@ def liveness(*, now: _dt.datetime | None = None, path=None) -> str | None:
             return "eval watchdog has NEVER run but sessions are waiting — the loop may be blind."
         return None
     last_dt = _dt.datetime.fromisoformat(last.replace("Z", "+00:00"))
-    age_days = (now.astimezone(_dt.timezone.utc) - last_dt).days
+    age_days = (now.astimezone(_dt.UTC) - last_dt).days
     if age_days > LIVENESS_STALE_DAYS and pending:
         return (
             f"eval watchdog last ran {age_days}d ago with sessions waiting — the loop may be "
@@ -154,7 +154,7 @@ def run_eval(
     if not statedb.telemetry_enabled():
         return EvalRunResult(ran=False)
 
-    now = now or _dt.datetime.now(_dt.timezone.utc)
+    now = now or _dt.datetime.now(_dt.UTC)
     scored_ids = _already_scored(path)
     pending = [s for s in statedb.session_ids_with_transcripts(path=path) if s not in scored_ids]
     result = EvalRunResult()

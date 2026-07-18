@@ -131,8 +131,7 @@ def _improve_command(args: list[str]) -> int:
 
 def _books_command(args: list[str]) -> int:
     """`dr-alex books ingest|status|add` — build / inspect / grow the book RAG index."""
-    from books import manifest
-    from books import retriever
+    from books import manifest, retriever
 
     sub = args[0] if args else "status"
 

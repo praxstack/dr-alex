@@ -698,7 +698,7 @@ def run_once(
     if root is None:
         raise ImproveError("no source-tree repo root found (persona/dr-alex.md not located)")
     judge_fn = judge_fn or _default_judge
-    now = now or _dt.datetime.now(_dt.timezone.utc)
+    now = now or _dt.datetime.now(_dt.UTC)
     baseline = _read_persona(root)
 
     def revert(reason, *, summary=None, gate=None, bench=None):
@@ -815,7 +815,7 @@ def revert_last(root: Path | None = None, *, now: _dt.datetime | None = None) ->
     if proc.returncode != 0:
         _run_git(root, "revert", "--abort", check=False)
         return False, f"git revert failed for {sha[:8]}: {(proc.stderr or '').strip()}"
-    now = now or _dt.datetime.now(_dt.timezone.utc)
+    now = now or _dt.datetime.now(_dt.UTC)
     _append_jsonl(_changelog_path(root), {"ts": now.isoformat(), "reverted_sha": sha})
     return True, f"reverted accepted improvement {sha[:8]} (a new revert commit was created)."
 

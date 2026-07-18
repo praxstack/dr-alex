@@ -94,8 +94,8 @@ CREATE TABLE IF NOT EXISTS pairing_guard (
 
 
 def _now(now: _dt.datetime | None = None) -> _dt.datetime:
-    dt = now or _dt.datetime.now(_dt.timezone.utc)
-    return dt.astimezone(_dt.timezone.utc) if dt.tzinfo else dt.replace(tzinfo=_dt.timezone.utc)
+    dt = now or _dt.datetime.now(_dt.UTC)
+    return dt.astimezone(_dt.UTC) if dt.tzinfo else dt.replace(tzinfo=_dt.UTC)
 
 
 def _iso(dt: _dt.datetime) -> str:

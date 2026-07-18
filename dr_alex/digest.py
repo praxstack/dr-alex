@@ -279,7 +279,7 @@ def _iso(now: _dt.datetime) -> str:
 
 
 def inbox_filename(session_id: str, now: _dt.datetime) -> str:
-    dt = now.astimezone(_dt.timezone.utc) if now.tzinfo else now.replace(tzinfo=_dt.timezone.utc)
+    dt = now.astimezone(_dt.UTC) if now.tzinfo else now.replace(tzinfo=_dt.UTC)
     ts = dt.strftime("%Y%m%dT%H%M%SZ")
     slug = re.sub(r"[^a-zA-Z0-9]", "", session_id).lower()[:8] or "session0"
     return f"{ts}-dr-alex-{slug}.md"

@@ -55,7 +55,7 @@ def is_test_traffic() -> bool:
 
 
 def real_trend(*, now: _dt.datetime | None = None) -> _memory.MoodRiskTrend:
-    now = now or _dt.datetime.now(_dt.timezone.utc)
+    now = now or _dt.datetime.now(_dt.UTC)
     stats = statedb.mood_stats(days=30, now=now)
     if stats.points == 0:
         return _memory.MoodRiskTrend(available=False)

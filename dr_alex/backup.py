@@ -67,8 +67,8 @@ def backups_dir(repo: Path) -> Path:
 
 
 def _ts(now: _dt.datetime | None) -> str:
-    dt = now or _dt.datetime.now(_dt.timezone.utc)
-    dt = dt.astimezone(_dt.timezone.utc) if dt.tzinfo else dt.replace(tzinfo=_dt.timezone.utc)
+    dt = now or _dt.datetime.now(_dt.UTC)
+    dt = dt.astimezone(_dt.UTC) if dt.tzinfo else dt.replace(tzinfo=_dt.UTC)
     return dt.strftime("%Y%m%dT%H%M%SZ")
 
 

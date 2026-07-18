@@ -47,8 +47,7 @@ _MIN_CANDIDATES = 20
 
 # Tiny stop list — words too common to help select a book.
 _STOP = frozenset(
-    "a an and the of to in on for with is are be it this that i you my me we our "
-    "how what when where why can do does about into over under from as at or".split()
+    ["a", "an", "and", "the", "of", "to", "in", "on", "for", "with", "is", "are", "be", "it", "this", "that", "i", "you", "my", "me", "we", "our", "how", "what", "when", "where", "why", "can", "do", "does", "about", "into", "over", "under", "from", "as", "at", "or"]
 )
 
 
@@ -162,9 +161,8 @@ def _match_technique(query: str) -> str | None:
     words = set(re.findall(r"[a-z]+", query.lower()))
     best: str | None = None
     for key in _TECHNIQUE_EXPANSIONS:
-        if all(w in words for w in key.split()):
-            if best is None or len(key) > len(best):
-                best = key
+        if all(w in words for w in key.split()) and (best is None or len(key) > len(best)):
+            best = key
     return best
 
 
@@ -360,7 +358,7 @@ def index_status(index_file: Path | None = None) -> IndexStatus:
 
 
 def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
-    num = sum(x * y for x, y in zip(a, b))
+    num = sum(x * y for x, y in zip(a, b, strict=False))
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))
     if na == 0 or nb == 0:
@@ -430,7 +428,7 @@ class BookRetriever:
         sims = [_cosine(qv, cv) for cv in cvs]
         sim_n = _minmax(sims)
         a = self.hybrid_alpha
-        combined = [a * b + (1 - a) * s for b, s in zip(bm, sim_n)]
+        combined = [a * b + (1 - a) * s for b, s in zip(bm, sim_n, strict=False)]
         order = sorted(range(len(cands)), key=lambda i: combined[i], reverse=True)
         return [
             RetrievedChunk(

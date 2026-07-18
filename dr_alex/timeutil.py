@@ -21,8 +21,8 @@ def now_utc(now: _dt.datetime | None = None) -> _dt.datetime:
 
     A naive input is interpreted as UTC; an aware input is converted to UTC.
     """
-    dt = now or _dt.datetime.now(_dt.timezone.utc)
-    return dt.astimezone(_dt.timezone.utc) if dt.tzinfo else dt.replace(tzinfo=_dt.timezone.utc)
+    dt = now or _dt.datetime.now(_dt.UTC)
+    return dt.astimezone(_dt.UTC) if dt.tzinfo else dt.replace(tzinfo=_dt.UTC)
 
 
 def now_iso(now: _dt.datetime | None = None) -> str:

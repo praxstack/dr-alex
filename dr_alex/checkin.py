@@ -118,7 +118,7 @@ def _save(state: CheckinState, path: Path | None = None) -> None:
 
 
 def mark_pending(*, now: _dt.datetime | None = None, path: Path | None = None) -> None:
-    now = now or _dt.datetime.now(_dt.timezone.utc)
+    now = now or _dt.datetime.now(_dt.UTC)
     st = _load(path)
     st.pending = True
     st.last_notified_ts = _iso(now)
@@ -131,7 +131,7 @@ def pending_banner(*, path: Path | None = None) -> str | None:
 
 
 def clear_pending(*, now: _dt.datetime | None = None, path: Path | None = None) -> None:
-    now = now or _dt.datetime.now(_dt.timezone.utc)
+    now = now or _dt.datetime.now(_dt.UTC)
     st = _load(path)
     if not st.pending:
         return
@@ -186,7 +186,7 @@ def run_checkin_notify(
 
     Best-effort and never safety-critical. Returns whether the notification posted.
     """
-    now = now or _dt.datetime.now(_dt.timezone.utc)
+    now = now or _dt.datetime.now(_dt.UTC)
     posted = post_notification(runner=runner)
     try:
         mark_pending(now=now, path=path)

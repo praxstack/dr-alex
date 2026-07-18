@@ -260,7 +260,7 @@ def generate(
     active_path: Path | None = None,
 ) -> PacketResult:
     """Build (and optionally write) the packet. Fail-loud: always returns SOME text."""
-    now = now or _dt.datetime.now(_dt.timezone.utc)
+    now = now or _dt.datetime.now(_dt.UTC)
     try:
         snap = statedb.window_snapshot(now=now, window_days=window_days, path=state_path)
         docs = records.parse_pattern_docs(records.read_text(active_path))
@@ -288,7 +288,7 @@ def _write_packet(text: str, now: _dt.datetime) -> str:
     except OSError:
         pass
     # Filename = date only, never clinical content (mirrors the D6 export-filename rule).
-    p = d / f"shreya-prep-{now.astimezone(_dt.timezone.utc).strftime('%Y-%m-%d')}.md"
+    p = d / f"shreya-prep-{now.astimezone(_dt.UTC).strftime('%Y-%m-%d')}.md"
     p.write_text(text, encoding="utf-8")
     try:
         os.chmod(p, 0o600)

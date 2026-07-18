@@ -30,9 +30,8 @@ from __future__ import annotations
 import datetime as _dt
 from dataclasses import dataclass, field
 
-from dr_alex import captoken
+from dr_alex import captoken, memstore, reorient
 from dr_alex import continuity as _continuity
-from dr_alex import memstore, reorient
 from dr_alex.statefile import SessionState
 from safety import context_guard
 
@@ -112,8 +111,8 @@ def _provenance(hit: memstore.Hit, *, now: _dt.datetime) -> tuple[str, bool]:
     valid = reorient.parse_iso(hit.valid_from)
     is_stale = False
     if valid is not None:
-        age = (now.astimezone(_dt.timezone.utc) if now.tzinfo
-               else now.replace(tzinfo=_dt.timezone.utc)) - valid
+        age = (now.astimezone(_dt.UTC) if now.tzinfo
+               else now.replace(tzinfo=_dt.UTC)) - valid
         is_stale = age.days > _STALE_MEMORY_DAYS
     return source, is_stale
 
@@ -184,7 +183,7 @@ def assemble(
     topic (a warm seed) so the highest-signal therapy facts for the live thread surface
     first; with no topic it falls back to recency/importance ranking over therapy memories.
     """
-    now = now or _dt.datetime.now(_dt.timezone.utc)
+    now = now or _dt.datetime.now(_dt.UTC)
 
     preamble = reorient.build_preamble(
         now=now, last_session_at=state.last_session_at, last_topic=state.last_topic

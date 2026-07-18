@@ -26,6 +26,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+
 from dr_alex import crypto, timeutil, ulid
 from dr_alex.timeutil import IST  # re-exported: exporters import IST from statedb (D13)
 
@@ -292,7 +293,7 @@ class MoodStats:
 
 
 def _mood_rows(days: int, now: _dt.datetime | None, path: Path | None) -> list[tuple[str, int]]:
-    cutoff = _now_iso((now or _dt.datetime.now(_dt.timezone.utc)) - _dt.timedelta(days=days))
+    cutoff = _now_iso((now or _dt.datetime.now(_dt.UTC)) - _dt.timedelta(days=days))
     try:
         with _connect(path) as conn:
             return conn.execute(
@@ -367,7 +368,7 @@ def session_moods(session_id: str, *, path: Path | None = None) -> tuple[int | N
 def risk_tier_max(*, days: int = 30, now: _dt.datetime | None = None, path: Path | None = None) -> str | None:
     if not telemetry_enabled():
         return None
-    cutoff = _now_iso((now or _dt.datetime.now(_dt.timezone.utc)) - _dt.timedelta(days=days))
+    cutoff = _now_iso((now or _dt.datetime.now(_dt.UTC)) - _dt.timedelta(days=days))
     rank = {"GREEN": 0, "AMBER": 1, "RED": 2}
     try:
         with _connect(path) as conn:
@@ -691,7 +692,7 @@ def late_night_signal(
     """Count sessions started 00:00–04:59 IST over the trailing window (G18)."""
     if not telemetry_enabled():
         return DependencySignal(window_days=window_days, threshold=threshold)
-    cutoff = _now_iso((now or _dt.datetime.now(_dt.timezone.utc)) - _dt.timedelta(days=window_days))
+    cutoff = _now_iso((now or _dt.datetime.now(_dt.UTC)) - _dt.timedelta(days=window_days))
     try:
         with _connect(path) as conn:
             rows = conn.execute(
@@ -836,7 +837,7 @@ class WindowSnapshot:
     turns_flagged: int = 0
     tier_counts: dict[str, int] = field(default_factory=dict)
     risk_tier_max: str | None = None
-    late_night: "DependencySignal | None" = None
+    late_night: DependencySignal | None = None
     #: decrypted free text from the window (user turns + homework + notes) — pattern matching
     #: only; NEVER serialized into the packet verbatim.
     pattern_corpus: list[str] = field(default_factory=list)
@@ -853,7 +854,7 @@ def window_snapshot(
     path: Path | None = None,
 ) -> WindowSnapshot:
     """Assemble the structured window the Shreya-prep packet reads. Degrades to empty."""
-    now = now or _dt.datetime.now(_dt.timezone.utc)
+    now = now or _dt.datetime.now(_dt.UTC)
     from_ts = _now_iso(now - _dt.timedelta(days=window_days))
     to_ts = _now_iso(now)
     snap = WindowSnapshot(from_ts=from_ts, to_ts=to_ts, window_days=window_days)

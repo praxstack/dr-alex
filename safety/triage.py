@@ -578,9 +578,8 @@ def triage(text: str, recent_risk: object = None, now: datetime | None = None) -
     # AMBER.
     strong = _strong_amber_hit(norm)
     mild = _mild_amber_count(norm)
-    if strong or mild >= 2:
-        tier = Tier.AMBER
-    elif mild == 1 and _is_night(now):
+    # Explicit branches (not a ternary) — this is safety-critical AMBER logic, kept legible.
+    if strong or mild >= 2 or (mild == 1 and _is_night(now)):  # noqa: SIM108
         tier = Tier.AMBER
     else:
         tier = Tier.GREEN

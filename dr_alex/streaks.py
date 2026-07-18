@@ -58,7 +58,7 @@ def compute(checkin_dates: Iterable[_dt.date | str], *, today: _dt.date) -> Cade
     # Longest consecutive run anywhere in history.
     ordered = sorted(days)
     longest = run = 1
-    for prev, cur in zip(ordered, ordered[1:]):
+    for prev, cur in zip(ordered, ordered[1:], strict=False):
         run = run + 1 if (cur - prev).days == 1 else 1
         longest = max(longest, run)
 

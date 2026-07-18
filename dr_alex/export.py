@@ -437,7 +437,7 @@ def export_range(
     active_path: Path | None = None,
 ) -> ExportResult:
     """Build (and optionally write) the date-ranged markdown + self-contained HTML export."""
-    now = now or _dt.datetime.now(_dt.timezone.utc)
+    now = now or _dt.datetime.now(_dt.UTC)
     redaction = _coerce_redaction(redaction)
     try:
         _validate_date(from_date)
@@ -483,7 +483,7 @@ def review(
     write: bool = True,
 ) -> ExportResult:
     """``dr-alex review`` — a default last-``days`` export ready for print-to-PDF."""
-    now = now or _dt.datetime.now(_dt.timezone.utc)
-    to_date = now.astimezone(_dt.timezone.utc).strftime("%Y-%m-%d")
-    from_date = (now.astimezone(_dt.timezone.utc) - _dt.timedelta(days=days)).strftime("%Y-%m-%d")
+    now = now or _dt.datetime.now(_dt.UTC)
+    to_date = now.astimezone(_dt.UTC).strftime("%Y-%m-%d")
+    from_date = (now.astimezone(_dt.UTC) - _dt.timedelta(days=days)).strftime("%Y-%m-%d")
     return export_range(from_date, to_date, redaction=redaction, now=now, write=write)
