@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 
-from dr_alex import crypto, ulid
+from dr_alex import crypto, timeutil, ulid
 
 _log = logging.getLogger("dr_alex.pairing")
 
@@ -99,7 +99,7 @@ def _now(now: _dt.datetime | None = None) -> _dt.datetime:
 
 
 def _iso(dt: _dt.datetime) -> str:
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return timeutil.now_iso(dt)
 
 
 def _parse(ts: str | None) -> _dt.datetime | None:

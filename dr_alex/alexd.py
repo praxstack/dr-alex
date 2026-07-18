@@ -42,6 +42,7 @@ from dr_alex import (
     pairing,
     statedb,
     telemetry,
+    timeutil,
     wire,
 )
 from dr_alex.session import SessionState
@@ -135,7 +136,7 @@ _sessions: dict[str, RoomSession] = {}
 
 
 def _iso_now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return timeutil.now_iso()
 
 
 def _new_session_id() -> str:

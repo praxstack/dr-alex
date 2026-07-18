@@ -19,18 +19,15 @@ silent decay.
 from __future__ import annotations
 
 import datetime as _dt
-from zoneinfo import ZoneInfo
 
-IST = ZoneInfo("Asia/Kolkata")
+from dr_alex.timeutil import IST, to_ist as _to_ist_shared
 
 #: G8 threshold — a continuity brief older than this is flagged stale.
 STALE_AFTER_DAYS = 14
 
 
 def _to_ist(now: _dt.datetime) -> _dt.datetime:
-    if now.tzinfo is None:
-        now = now.replace(tzinfo=_dt.timezone.utc)
-    return now.astimezone(IST)
+    return _to_ist_shared(now)
 
 
 def parse_iso(value: str | None) -> _dt.datetime | None:
