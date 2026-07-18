@@ -88,6 +88,17 @@ def test_review_defaults_to_last_30_days() -> None:
     assert res.from_date == "2026-06-18"
 
 
+def test_sessions_counted_only_within_requested_range() -> None:
+    # In-range session (2026-07-03) + an out-of-range one (2026-07-15) that a now-anchored
+    # trailing window would wrongly capture. A late-night (IST 00:00–04:59) in-range session too.
+    statedb.start_session("S-inrange", now=_dt.datetime(2026, 7, 3, 12, tzinfo=_UTC))
+    statedb.start_session("S-inrange-night", now=_dt.datetime(2026, 7, 4, 21, tzinfo=_UTC))  # 02:30 IST
+    statedb.start_session("S-outrange", now=_dt.datetime(2026, 7, 15, 12, tzinfo=_UTC))
+    data = export.collect("2026-07-01", "2026-07-05", redaction="summary", now=_now())
+    assert data.sessions == 2  # only the two in-range sessions, not the 07-15 one
+    assert data.late_night_count == 1
+
+
 def test_mood_svg_handles_empty_series() -> None:
     svg = export.mood_svg([("2026-07-01", None), ("2026-07-02", None)])
     assert "<svg" in svg
