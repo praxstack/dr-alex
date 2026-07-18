@@ -25,8 +25,11 @@ so replay never duplicates a memory or writes a second inbox file.
 from __future__ import annotations
 
 import datetime as _dt
+import logging
 from dataclasses import dataclass
 from pathlib import Path
+
+_log = logging.getLogger("dr_alex.fanout")
 
 from dr_alex import continuity as _continuity
 from dr_alex import digest as _digest
@@ -130,7 +133,19 @@ def complete(
     written_ids = _channel_b_durable(marker, digest, is_red, remember_fn, state_path)
     inbox_path, scrub_failed = _channel_c_inbox(marker, digest, scrub_fn, inbox_dir_fn, state_path)
     _regenerate_continuity(marker, digest, now, continuity_fn, save_continuity_fn, state_path)
-    _finalize_state(marker, digest, state_path)
+
+    # D5: only clear the crash-safety marker when EVERY durable step actually completed. A
+    # transient remember/scrub failure must NOT be swallowed by unconditionally clearing the
+    # marker — leave it so the next session-start recover_if_needed replays the missing steps
+    # (each is idempotent, so replay never duplicates a memory or inbox file).
+    incomplete = _fanout_incomplete(marker, digest, is_red)
+    if incomplete:
+        _log.warning(
+            "session-end fan-out INCOMPLETE for %s: %s — marker kept for crash-safe replay "
+            "at next session start (nothing dropped)",
+            marker.session_id, "; ".join(incomplete),
+        )
+    _finalize_state(marker, digest, state_path, keep_marker=bool(incomplete))
 
     # Phase 6 — canonical local record FIRST (local truth), THEN the Notion mirror. Both are
     # idempotent (session_id-keyed) and strictly best-effort: neither may break session end.
@@ -149,6 +164,25 @@ def complete(
     )
 
 
+def _fanout_incomplete(marker, digest, is_red) -> list[str]:
+    """Return human-readable reasons the fan-out is NOT fully done, or [] when complete (D5).
+
+    On RED the durable Channel B is withheld by design (conservative), so it does not count
+    as incomplete. Channel C (inbox) is incomplete whenever ``inbox_written`` is still False —
+    the scrub-failed path leaves it False precisely so this keeps the marker for replay.
+    """
+    reasons: list[str] = []
+    if not is_red and len(marker.remembered) < len(digest.durable_learnings):
+        reasons.append(
+            f"durable learnings {len(marker.remembered)}/{len(digest.durable_learnings)} written"
+        )
+    if not marker.inbox_written:
+        reasons.append("inbox digest not written (scrub failed or pending)")
+    if not marker.continuity_written:
+        reasons.append("continuity brief not regenerated")
+    return reasons
+
+
 def _channel_b_durable(marker, digest, is_red, remember_fn, state_path) -> list[str]:
     """Write durable learnings (skip on RED; skip already-ledgered indices). Idempotent."""
     written_ids: list[str] = []
@@ -158,8 +192,16 @@ def _channel_b_durable(marker, digest, is_red, remember_fn, state_path) -> list[
     for i, learning in enumerate(digest.durable_learnings):
         if i in remembered_idx:
             continue
-        res = remember_fn(learning, tags=["therapy"], sensitivity="high",
-                          importance=memstore.IMPORTANCE_MAX, memtype="user")
+        # D5: a transient remember failure — whether it returns ok=False OR raises — must
+        # leave this index OUT of the ledger so a later replay retries it, never silently
+        # drop the learning. The marker is kept (see _fanout_incomplete) so recovery runs.
+        try:
+            res = remember_fn(learning, tags=["therapy"], sensitivity="high",
+                              importance=memstore.IMPORTANCE_MAX, memtype="user")
+        except Exception:  # noqa: BLE001 — a transient store error is recoverable, not fatal
+            _log.warning("durable remember failed (transient) for %s idx=%s — will retry on replay",
+                         marker.session_id, i)
+            continue
         if res.ok:
             if res.id:
                 written_ids.append(res.id)
@@ -231,9 +273,19 @@ def _mirror_canonical(digest: SessionDigest, *, mirror_fn=None) -> tuple[str | N
         return None, None
 
 
-def _finalize_state(marker, digest, state_path) -> None:
-    """Persist last_session_at/last_topic + generated_at, then clear the marker."""
+def _finalize_state(marker, digest, state_path, *, keep_marker: bool = False) -> None:
+    """Persist last_session_at/last_topic + generated_at; clear the marker only if done.
+
+    ``keep_marker`` (D5): when a durable step is still incomplete, DON'T clear ``unfinalized``
+    — leave it so the next session-start recovery replays the missing steps. The G8 stamps are
+    only advanced on a fully-finalized session, so the staleness banner never claims a brief
+    is fresh while its regeneration is still pending.
+    """
     st = statefile.load(state_path)
+    if keep_marker:
+        # Preserve the crash-safety marker persisted by the per-step ledger; a later replay
+        # completes the fan-out and finalizes for real. Do not advance the G8 stamps yet.
+        return
     # generated_at is the session's end whether the brief was (re)written this run or a prior
     # crashed one — so the G8 banner stays accurate across replay.
     st.continuity_generated_at = digest.ended_at

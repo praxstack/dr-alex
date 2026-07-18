@@ -8,6 +8,7 @@ pure crisis card and never calls the LLM.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from rich.markup import escape
@@ -31,6 +32,9 @@ from dr_alex.session import SessionState
 from dr_alex.widgets import HomeworkScreen, MoodBar, rail_data, render_rail
 from safety import crisis_card
 from safety.triage import Tier
+
+
+_log = logging.getLogger("dr_alex.app")
 
 
 def _iso_now() -> str:
@@ -630,12 +634,20 @@ class DrAlexApp(App[None]):
         self._finalized = True
         turns = [(m.role, m.content) for m in self._history]
         try:
-            fanout.finalize_session(
+            res = fanout.finalize_session(
                 turns,
                 session_id=self._session_id,
                 started_at=self._session_started_at,
                 risk_tier_max=self._risk_tier_max.value,
             )
+            # D5: don't discard a transient scrub failure — surface it. Durable memory is not
+            # lost (fanout keeps the unfinalized marker so the next start recovers it), but the
+            # failure must be visible, not swallowed.
+            if res is not None and res.scrub_failed:
+                _log.warning(
+                    "session %s: inbox scrub failed — digest withheld, marker kept for "
+                    "recovery at next start (no data dropped)", self._session_id,
+                )
         except Exception:  # noqa: BLE001 — session end must never crash on the way out
             pass
 
