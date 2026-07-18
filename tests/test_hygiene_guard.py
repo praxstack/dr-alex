@@ -62,7 +62,17 @@ def test_index_dir_if_present_is_private_0700() -> None:
     assert mode == 0o700, f"data/index/ must be 0700, found {oct(mode)}"
 
 
-def test_no_git_remote_before_final_review() -> None:
-    # R1: privacy — ~/dr-alex must have no remote yet.
-    remotes = _git("remote").split()
-    assert remotes == [], f"R1 violation — unexpected git remote(s): {remotes}"
+#: Remotes Prax has explicitly sanctioned (R1 final review completed 2026-07-18;
+#: push to the private repo authorized by Prax the same day). Anything else is
+#: still an unsanctioned exfil target and must fail this guard.
+_SANCTIONED_REMOTES = {"origin": "https://github.com/praxstack/dr-alex.git"}
+
+
+def test_only_sanctioned_git_remotes() -> None:
+    # R1 (post-review form): the history was purged of clinical data and reviewed
+    # before any remote existed; now only the explicitly-sanctioned private
+    # remote may be configured. New/changed remotes require Prax's consent.
+    remotes = {name: _git("remote", "get-url", name).strip() for name in _git("remote").split()}
+    assert remotes == _SANCTIONED_REMOTES, (
+        f"R1 violation — unsanctioned git remote(s): {remotes} != {_SANCTIONED_REMOTES}"
+    )
