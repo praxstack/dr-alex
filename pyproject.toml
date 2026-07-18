@@ -16,6 +16,12 @@ dependencies = [
     "httpx>=0.28.1",
 ]
 
+[project.optional-dependencies]
+# Phase 2b (drop-in books): PDF text extraction via PyMuPDF — a fast, fully-offline
+# ~20MB binary wheel (no model download, no torch). OPTIONAL: .txt/.md books work
+# without it, and a dropped PDF prints a one-line install hint rather than crashing.
+pdf = ["pymupdf>=1.24"]
+
 [project.scripts]
 dr-alex = "dr_alex.cli:main"
 
@@ -23,6 +29,9 @@ dr-alex = "dr_alex.cli:main"
 dev = [
     "httpx>=0.28.1",
     "pytest>=8.0",
+    # Phase 2b: exercise the REAL PDF extraction path in the suite (round-trips a tiny
+    # synthetic PDF). Mirrors the optional-dependencies 'pdf' extra.
+    "pymupdf>=1.24",
 ]
 
 [build-system]
