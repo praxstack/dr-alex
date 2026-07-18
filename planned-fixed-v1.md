@@ -28,7 +28,7 @@
 | 16 | DONE | high/S/med | No linter, formatter, or type-checker for a safety-critical codebase | `pyproject.toml:53` |
 | 17 | DONE | high/S/med | statedb._connect re-applies the full 8-table schema on every single DB operation | `dr_alex/statedb.py:187` |
 | 18 | DONE | med/M/med | memctl recall/remember/scrub each cold-spawn `uv run`; session-end fan-out spawns one subprocess per durable learning | `dr_alex/memstore.py:83` |
-| 19 | TODO | high/S/low | The Room PWA shell is served with no Content-Security-Policy or response-hardening headers | `dr_alex/alexd.py:216` |
+| 19 | DONE | high/S/low | The Room PWA shell is served with no Content-Security-Policy or response-hardening headers | `dr_alex/alexd.py:216` |
 
 ## Detail + fix approach
 
@@ -152,7 +152,7 @@
 - **Fix:** Add --no-sync (or --frozen) to the uv launcher to skip per-call resolution, and collapse the fan-out's per-learning writes into one memctl bulk invocation (the store's write kernel has a --bulk mode). Keeps the memctl-CLI-only contract intact.
 
 ### #19 — The Room PWA shell is served with no Content-Security-Policy or response-hardening headers
-- **Status:** TODO
+- **Status:** DONE
 - **Location:** `dr_alex/alexd.py:216`  ·  **Category:** security  ·  conf high / effort S / fix-risk low
 - **Impact:** root() and _asset_response set no CSP, X-Content-Type-Options, or Referrer-Policy on any response. The Room is a therapy browser surface reachable from the phone over the tailscale HTTPS origin. The '
 - **Fix:** Add a strict CSP to shell/asset responses (default-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none') plus X-Content-Type-Options: nosniff and Referrer-Policy: no-referrer.
