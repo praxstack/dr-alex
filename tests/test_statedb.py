@@ -181,3 +181,28 @@ def test_schema_applied_once_via_user_version(tmp_path) -> None:
     statedb.record_mood("open", 5, path=p)
     statedb.record_mood("close", 6, path=p)
     assert statedb.open_homework(path=p) == []  # ops after the guarded schema still succeed
+
+
+def test_existing_v0_db_upgrades_in_place(tmp_path) -> None:
+    """D17 upgrade path: a pre-D17 state.db (tables present, user_version=0) must be
+    stamped to the current version on first connect and keep ALL its existing rows —
+    the IF-NOT-EXISTS re-apply is a no-op on data, never a wipe."""
+    import sqlite3
+
+    p = _db(tmp_path)
+    # Simulate the pre-D17 world: full schema applied but NO user_version stamp,
+    # with real data already in it.
+    statedb.record_mood("open", 4, path=p)
+    with sqlite3.connect(str(p)) as c:
+        c.execute("PRAGMA user_version = 0")
+    with sqlite3.connect(str(p)) as c:
+        assert c.execute("PRAGMA user_version").fetchone()[0] == 0
+        before = c.execute("SELECT COUNT(*) FROM mood_events").fetchone()[0]
+    assert before == 1
+
+    # First op against the v0 file: schema re-applies once (harmless), version stamps.
+    statedb.record_mood("close", 7, path=p)
+    with sqlite3.connect(str(p)) as c:
+        assert c.execute("PRAGMA user_version").fetchone()[0] == statedb._SCHEMA_VERSION
+        after = c.execute("SELECT COUNT(*) FROM mood_events").fetchone()[0]
+    assert after == 2  # pre-existing row survived the in-place upgrade
