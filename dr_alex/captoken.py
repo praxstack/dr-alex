@@ -65,7 +65,7 @@ def mint(ttl: int = MAX_TTL_SECONDS, *, now: float | None = None) -> str:
     Called by the sanctioned safe path (``safety_check`` / session-start assembly).
     """
     ttl = max(1, min(int(ttl), MAX_TTL_SECONDS))
-    expiry = int((now if now is not None else time.time())) + ttl
+    expiry = int(now if now is not None else time.time()) + ttl
     return f"{expiry}.{_sign(expiry)}"
 
 

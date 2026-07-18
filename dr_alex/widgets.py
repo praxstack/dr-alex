@@ -23,7 +23,6 @@ from textual.widgets import Button, Label, Static
 from dr_alex import sparkline as _sparkline
 from dr_alex import statedb, streaks
 
-
 # ---------------------------------------------------------------------------
 # Mood chips (item 3) — a docked, non-focus-stealing 1–10 + Skip strip.
 # ---------------------------------------------------------------------------
@@ -77,19 +76,18 @@ class HomeworkScreen(ModalScreen[None]):
         self._db_path = db_path
 
     def compose(self) -> ComposeResult:
-        with Center():
-            with VerticalScroll(id="hw-box"):
-                yield Static("[b]Homework[/b]  [dim]— things you set with Shreya / here[/dim]",
-                             id="hw-title", markup=True)
-                items = statedb.open_homework(path=self._db_path)
-                if not items:
-                    yield Static("[dim]Nothing open right now. That's fine.[/dim]",
-                                 id="hw-empty", markup=True)
-                for hw in items:
-                    with Horizontal(classes="hw-row"):
-                        yield Button("done", id=f"hw-{hw.id}", classes="hw-done")
-                        yield Static(escape(hw.title), classes="hw-item", markup=False)
-                yield Static("[dim]Press Esc to close.[/dim]", id="hw-hint", markup=True)
+        with Center(), VerticalScroll(id="hw-box"):
+            yield Static("[b]Homework[/b]  [dim]— things you set with Shreya / here[/dim]",
+                         id="hw-title", markup=True)
+            items = statedb.open_homework(path=self._db_path)
+            if not items:
+                yield Static("[dim]Nothing open right now. That's fine.[/dim]",
+                             id="hw-empty", markup=True)
+            for hw in items:
+                with Horizontal(classes="hw-row"):
+                    yield Button("done", id=f"hw-{hw.id}", classes="hw-done")
+                    yield Static(escape(hw.title), classes="hw-item", markup=False)
+            yield Static("[dim]Press Esc to close.[/dim]", id="hw-hint", markup=True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -120,7 +118,7 @@ def rail_data(*, now=None, db_path=None) -> RailData:
     spark = _sparkline.sparkline(series, lo=1, hi=10)
     stats = statedb.mood_stats(days=30, now=now, path=db_path)
     today = (now.astimezone(statedb.IST).date() if (now and now.tzinfo)
-             else (now.date() if now else _dt.datetime.now(_dt.timezone.utc).astimezone(statedb.IST).date()))
+             else (now.date() if now else _dt.datetime.now(_dt.UTC).astimezone(statedb.IST).date()))
     cad = streaks.compute(statedb.checkin_dates(path=db_path), today=today)
     return RailData(spark=spark, latest=stats.latest, cadence_line=streaks.gentle_line(cad))
 

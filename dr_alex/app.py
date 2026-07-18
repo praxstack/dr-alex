@@ -9,7 +9,7 @@ pure crisis card and never calls the LLM.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from rich.markup import escape
 from textual import work
@@ -33,7 +33,6 @@ from dr_alex.session import SessionState
 from dr_alex.widgets import HomeworkScreen, MoodBar, rail_data, render_rail
 from safety import crisis_card
 from safety.triage import Tier
-
 
 _log = logging.getLogger("dr_alex.app")
 
@@ -65,14 +64,13 @@ class CrisisScreen(ModalScreen[None]):
     ]
 
     def compose(self) -> ComposeResult:
-        with Center():
-            with VerticalScroll(id="crisis-box"):
-                yield Static(crisis_card.render_rich(), id="crisis-card", markup=True)
-                yield Static(
-                    "[dim]Press Esc to come back. I'm still here.[/dim]",
-                    id="crisis-hint",
-                    markup=True,
-                )
+        with Center(), VerticalScroll(id="crisis-box"):
+            yield Static(crisis_card.render_rich(), id="crisis-card", markup=True)
+            yield Static(
+                "[dim]Press Esc to come back. I'm still here.[/dim]",
+                id="crisis-hint",
+                markup=True,
+            )
 
 
 class DrAlexApp(App[None]):
@@ -381,7 +379,7 @@ class DrAlexApp(App[None]):
             from dr_alex import reorient
             state = statefile.load()
             banner = reorient.staleness_banner(
-                now=datetime.now(timezone.utc),
+                now=datetime.now(UTC),
                 continuity_generated_at=state.continuity_generated_at,
                 has_unfinalized=bool(state.unfinalized),
             )

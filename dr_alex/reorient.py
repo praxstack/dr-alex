@@ -20,7 +20,8 @@ from __future__ import annotations
 
 import datetime as _dt
 
-from dr_alex.timeutil import IST, to_ist as _to_ist_shared
+from dr_alex.timeutil import IST
+from dr_alex.timeutil import to_ist as _to_ist_shared
 
 #: G8 threshold — a continuity brief older than this is flagged stale.
 STALE_AFTER_DAYS = 14
@@ -39,7 +40,7 @@ def parse_iso(value: str | None) -> _dt.datetime | None:
     except (ValueError, TypeError):
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=_dt.timezone.utc)
+        dt = dt.replace(tzinfo=_dt.UTC)
     return dt
 
 
@@ -118,8 +119,8 @@ def staleness_banner(
     gen = parse_iso(continuity_generated_at)
     if gen is None:
         return None
-    age_days = (now.astimezone(_dt.timezone.utc) if now.tzinfo else
-                now.replace(tzinfo=_dt.timezone.utc)) - gen
+    age_days = (now.astimezone(_dt.UTC) if now.tzinfo else
+                now.replace(tzinfo=_dt.UTC)) - gen
     if age_days.days > STALE_AFTER_DAYS:
         return (
             f"memory may be stale — my notes are from {gen.astimezone(IST).strftime('%Y-%m-%d')} "

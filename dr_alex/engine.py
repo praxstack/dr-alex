@@ -20,20 +20,14 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from dr_alex import captoken
+from dr_alex import captoken, gates, paths, statedb, telemetry
 from dr_alex import config as _config
 from dr_alex import continuity as _continuity
-from dr_alex import gates
 from dr_alex import llm as _llm
 from dr_alex import memory as _memory
-from dr_alex import paths
-from dr_alex import statedb
 from dr_alex import statefile as _statefile
-from dr_alex import telemetry
 from dr_alex.session import SessionState
-from safety import context_guard
-from safety import crisis_card
-from safety import crisis_questioning
+from safety import context_guard, crisis_card, crisis_questioning
 from safety.triage import Tier, red_category, triage
 
 _trace_log = logging.getLogger("dr_alex.trace")
@@ -403,7 +397,7 @@ def run_turn(
     safety_note = safety_probe_note(session, tier, user_text)
 
     def _gen(*, corrective: str | None = None, note: str | None = safety_note):
-        kwargs: dict = dict(system_prompt=sp, book_context=book_ctx, timeout=timeout)
+        kwargs: dict = {"system_prompt": sp, "book_context": book_ctx, "timeout": timeout}
         if corrective is not None:
             kwargs["corrective"] = corrective
         if note is not None:

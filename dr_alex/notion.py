@@ -245,7 +245,7 @@ class NotionClient:
             except Exception:  # noqa: BLE001
                 pass
 
-    def __enter__(self) -> "NotionClient":
+    def __enter__(self) -> NotionClient:
         return self
 
     def __exit__(self, *exc) -> None:

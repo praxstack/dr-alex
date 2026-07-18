@@ -32,6 +32,9 @@ dev = [
     # Phase 2b: exercise the REAL PDF extraction path in the suite (round-trips a tiny
     # synthetic PDF). Mirrors the optional-dependencies 'pdf' extra.
     "pymupdf>=1.24",
+    # D16: lint + format + type-check for a safety-critical codebase.
+    "ruff>=0.6",
+    "mypy>=1.11",
 ]
 
 [build-system]
@@ -53,3 +56,41 @@ artifacts = ["dr_alex/room/*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+# ---------------------------------------------------------------------------
+# Lint + format + type-check (D16). Run: `uv run ruff check`, `uv run ruff format`,
+# `uv run mypy dr_alex safety books`. The suite (`uv run pytest -q`) remains the
+# primary gate; these add a static floor. Formatting is opt-in (line-length matches the
+# existing ~100-col style) so it never explodes the diff.
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = [".venv", "dr_alex/_bundled"]
+
+[tool.ruff.lint]
+# A bounded, high-signal rule set — not a maximalist campaign. E/F (pyflakes+pycodestyle),
+# I (import sort), B (bugbear), UP (pyupgrade), SIM (simplify), N (naming), C4 (comprehensions).
+select = ["E", "F", "I", "B", "UP", "SIM", "N", "C4"]
+ignore = [
+    "E501",    # line length is enforced by the formatter, not the linter
+    "B008",    # FastAPI Depends()/Header() in defaults is idiomatic
+    "SIM105",  # try/except/pass is intentional in the fail-safe telemetry paths
+    "E402",    # several modules intentionally lazy/local-import to avoid import cycles
+    "N818",    # renaming the custom exceptions (…Refused/…Error) is an API change, out of scope
+    "UP042",   # safety.Tier is a deliberate (str, Enum); not migrating to StrEnum here
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["N802", "N806"]  # test helpers use non-PEP8 names freely
+
+[tool.mypy]
+python_version = "3.12"
+files = ["dr_alex", "safety", "books"]
+exclude = "dr_alex/_bundled"
+ignore_missing_imports = true
+# Non-blocking floor: opt-in strictness. Ratchet toward the safety/ + gates modules first
+# rather than a repo-wide type-annotation campaign.
+warn_unused_ignores = false
+check_untyped_defs = false

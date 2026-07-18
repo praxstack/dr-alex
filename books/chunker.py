@@ -113,9 +113,7 @@ def _title_like(line: str) -> bool:
         return False
     if line[-1] in ",;":
         return False
-    if line.isdigit():
-        return False
-    return True
+    return not line.isdigit()
 
 
 def _explicit_candidates(lines: list[str]) -> list[_Candidate]:
@@ -330,7 +328,7 @@ def _validated(headings: list[Heading], text_len: int) -> list[Heading]:
         return []
     if (headings[-1].pos - headings[0].pos) < text_len * 0.3:
         return []
-    gaps = [b.pos - a.pos for a, b in zip(headings, headings[1:])]
+    gaps = [b.pos - a.pos for a, b in zip(headings, headings[1:], strict=False)]
     gaps.sort()
     if gaps and gaps[len(gaps) // 2] < 1500:
         return []
@@ -400,7 +398,7 @@ def chunk_book(spec: BookSpec, text: str) -> list[Chunk]:
     else:
         if headings[0].pos > 0:
             sections.append((None, text[: headings[0].pos]))
-        for h, nxt in zip(headings, [*headings[1:], None]):
+        for h, nxt in zip(headings, [*headings[1:], None], strict=False):
             end = nxt.pos if nxt is not None else len(text)
             sections.append((h.label, text[h.pos:end]))
 

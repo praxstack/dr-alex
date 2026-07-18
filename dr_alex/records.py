@@ -335,7 +335,7 @@ def update_from_digest(
     the session-log entry (keyed by ``session_id``); rebuilds Homework from state.db; folds
     open threads. Returns the file path. Written locally FIRST (before any Notion mirror).
     """
-    now = now or _dt.datetime.now(_dt.timezone.utc)
+    now = now or _dt.datetime.now(_dt.UTC)
     p = active_file_path(path)
     existing = read_text(p) or ""
     sections = _split_sections(existing)
@@ -370,7 +370,7 @@ def update_from_digest(
 
 def ensure_scaffold(*, now: _dt.datetime | None = None, path: Path | None = None) -> Path:
     """Create the Active File with default sections if it doesn't exist yet."""
-    now = now or _dt.datetime.now(_dt.timezone.utc)
+    now = now or _dt.datetime.now(_dt.UTC)
     p = active_file_path(path)
     if p.exists():
         return p

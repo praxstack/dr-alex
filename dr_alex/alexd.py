@@ -26,16 +26,24 @@ import mimetypes
 import os
 import signal
 import threading as _threading
-from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    Response,
+    StreamingResponse,
+)
 from starlette.concurrency import run_in_threadpool
 
 from dr_alex import (
     continuity as _continuity,
+)
+from dr_alex import (
     debounce as _debounce,
+)
+from dr_alex import (
     engine,
     llm,
     memstore,
@@ -105,7 +113,7 @@ class RoomSession:
         self._pending_lock = _threading.Lock()
         self.debounce = _debounce.DebounceBuffer(flush_callback=self._absorb_flush)
 
-    def _absorb_flush(self, payload: "_debounce.FlushPayload") -> None:
+    def _absorb_flush(self, payload: _debounce.FlushPayload) -> None:
         """Timer/cap flush handoff: retain the coalesced text instead of discarding it (D10)."""
         if payload.text:
             with self._pending_lock:
@@ -294,8 +302,8 @@ def create_app() -> FastAPI:
         label = str(payload.get("label", "")) if isinstance(payload, dict) else ""
         try:
             dev = pairing.redeem_pairing_code(code, label=label or None)
-        except pairing.PairingLockedOut:
-            raise HTTPException(status_code=429, detail="too many attempts; try again later")
+        except pairing.PairingLockedOut as exc:
+            raise HTTPException(status_code=429, detail="too many attempts; try again later") from exc
         if dev is None:
             raise HTTPException(status_code=401, detail="invalid or expired pairing code")
         return JSONResponse({"device_id": dev.id, "device_token": dev.token})

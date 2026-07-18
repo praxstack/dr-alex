@@ -33,8 +33,7 @@ _log = logging.getLogger("dr_alex.fanout")
 
 from dr_alex import continuity as _continuity
 from dr_alex import digest as _digest
-from dr_alex import memstore
-from dr_alex import statefile
+from dr_alex import memstore, statefile
 from dr_alex.digest import SessionDigest
 from dr_alex.statefile import SessionState, UnfinalizedMarker
 
@@ -126,7 +125,7 @@ def complete(
     state_path: Path | None = None,
 ) -> FanoutResult:
     """Complete (or resume) the fan-out for one session. Every step is idempotent."""
-    now = now or _dt.datetime.now(_dt.timezone.utc)
+    now = now or _dt.datetime.now(_dt.UTC)
     digest: SessionDigest = _digest.from_jsonable(marker.digest)
     is_red = digest.risk_tier_max == "RED"
 
@@ -308,7 +307,7 @@ def finalize_session(
     **complete_kwargs,
 ) -> FanoutResult:
     """The normal end-of-session path: begin (distill + marker) then complete."""
-    now = now or _dt.datetime.now(_dt.timezone.utc)
+    now = now or _dt.datetime.now(_dt.UTC)
     marker = begin(
         turns, session_id=session_id, started_at=started_at,
         risk_tier_max=risk_tier_max, now=now, distill_fn=distill_fn, state_path=state_path,
