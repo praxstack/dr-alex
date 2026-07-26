@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 from pathlib import Path
 
 from dr_alex import paths
@@ -44,18 +45,31 @@ def continuity_write_path() -> Path:
 
 
 def save_continuity_text(text: str) -> Path:
-    """Write the continuity brief 0600 under a 0700 ``data/`` dir (clinical, gitignored)."""
+    """Write the continuity brief 0600 under a 0700 ``data/`` dir (clinical, gitignored).
+
+    Atomic (temp + ``os.replace``), same idiom as ``statefile.save``: a truncate-in-place write
+    that then failed would leave an EMPTY brief, and the brief has no backup. The ``fsync``
+    runs before the replace, so a failure leaves the previous good brief intact.
+    """
     p = continuity_write_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     try:
         os.chmod(p.parent, 0o700)
     except OSError:
         pass
-    p.write_text(text, encoding="utf-8")
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=".continuity.", suffix=".tmp")
     try:
-        os.chmod(p, 0o600)
-    except OSError:
-        pass
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, 0o600)  # before the replace: never briefly visible at umask perms
+        os.replace(tmp, p)
+    finally:
+        try:
+            os.unlink(tmp)  # no-op on the success path
+        except OSError:
+            pass
     return p
 
 

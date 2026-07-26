@@ -31,6 +31,8 @@ _FORBIDDEN = (
     re.compile(r"(^|/)user-books\.json$"),       # Phase 2b: supplemental drop-in book manifest
     re.compile(r"\.extracted\.txt$"),            # Phase 2b: derived PDF extraction caches
     re.compile(r"^data/improve/"),               # G22: persona self-improvement audit/changelog
+    re.compile(r"^logs/.*\.log"),                # daemon logs (body-free, but derived + local)
+    re.compile(r"^data/\.(checkin|health|continuity)\.[^/]*\.tmp$"),  # atomic-write temps
 )
 
 

@@ -45,6 +45,19 @@ data/alexd.pid
 data/session_state.json
 data/*.json
 data/.session_state.*.tmp
+data/.checkin.*.tmp
+data/.health.*.tmp
+data/.continuity.*.tmp
+
+# Daemon logs. Body-free by contract (R3: structured facts only, content lives in POST bodies)
+# but derived + local-only, and never tracked. They live HERE rather than /tmp because /tmp is
+# wiped at every boot, which permanently destroyed the postmortem for an overnight failure.
+# Size is bounded: the app log rotates (RotatingFileHandler) and the launchd-captured files are
+# trimmed at daemon start. The dir itself is tracked (empty) so launchd always has somewhere to
+# open its stdout/stderr — launchd does not create intermediate directories and silently
+# discards output when it cannot open the path.
+logs/*
+!logs/.gitkeep
 
 # Phase 2 (council D1): derived book index — rebuildable from the corpus, never committed
 data/index/
