@@ -313,8 +313,10 @@ def record_turn_telemetry(
         # G10: a visibly empty delivered reply is a malfunction — queue one ack for next start.
         if not reply_text or not reply_text.strip() or reply_text.strip() == "(no response)":
             telemetry.note_malfunction("empty_reply", session_id=session_id, now=now)
-    except Exception:  # noqa: BLE001 — telemetry must never break a turn
-        pass
+    except Exception as exc:  # noqa: BLE001 — telemetry must never break a turn
+        # Body-free (R3): the class only. Losing this means the transcript row and the G10
+        # empty-reply malfunction ack are both missing, so the next session starts blind.
+        _trace_log.warning("post-turn telemetry failed: %s", type(exc).__name__)
 
 
 @dataclass

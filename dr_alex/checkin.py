@@ -190,8 +190,9 @@ def run_checkin_notify(
     posted = post_notification(runner=runner)
     try:
         mark_pending(now=now, path=path)
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001 — a posted notification is not worth crashing on
+        # If the pending marker does not persist, the next run re-notifies for the same day.
+        _log.warning("check-in pending marker not persisted: %s", type(exc).__name__)
     return posted
 
 

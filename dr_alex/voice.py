@@ -218,11 +218,14 @@ class FfmpegRecorder:
             try:
                 # 'q' tells ffmpeg to finalize the file cleanly; fall back to terminate.
                 self._proc.communicate(input=b"q", timeout=10)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 — fall back to terminate
+                _log.warning("ffmpeg clean-stop failed, terminating: %s", type(exc).__name__)
                 try:
                     self._proc.terminate()
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as exc2:  # noqa: BLE001 — nothing left to try
+                    # A recorder we could neither finalize nor kill leaks a process AND may
+                    # leave a truncated audio file behind; that is worth a line.
+                    _log.warning("ffmpeg terminate also failed: %s", type(exc2).__name__)
         return self._path
 
 

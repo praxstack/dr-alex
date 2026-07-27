@@ -10,8 +10,6 @@ Modes
     dr-alex review        a default last-30-days export, ready to print-to-PDF
     dr-alex "some text"   one-shot: a single safety-first exchange, printed and done
     dr-alex serve         run alexd (The Room) in the foreground — http://127.0.0.1:8787/
-    dr-alex health        probe the running daemon (prints ok/down)
-    dr-alex health --notify   one alert per outage if alexd is down (what the launchd job runs)
     dr-alex pair          mint a one-time pairing code for the PWA (single-use, ≤5min)
     dr-alex devices       list paired devices
     dr-alex revoke <id>   revoke a paired device token
@@ -328,37 +326,6 @@ def _checkin_command(args: list[str]) -> int:
     return 0
 
 
-def _health_command(args: list[str]) -> int:
-    """`dr-alex health [--notify]` — probe the running daemon; optionally alert once per outage.
-
-    Wrapped end-to-end and ALWAYS returns 0: this is meant to run under launchd, and a
-    watchdog that can itself exit non-zero is a watchdog that can become the next crash loop.
-    """
-    try:
-        from dr_alex import health
-
-        if "--notify" in args:
-            res = health.run_health_check()
-            # Body-free status only (R3) — there is no therapy data on this path at all.
-            print(
-                f"health: {'up' if res['up'] else 'down'} ({res['reason']})",
-                file=sys.stderr,
-            )
-            return 0
-        if "--install-plist" in args:
-            print("alexd health watchdog LaunchAgent (DISABLED by default). To enable:")
-            print(f"  cp {health.plist_relpath()} ~/Library/LaunchAgents/ \\")
-            print(f"    && launchctl load -w ~/Library/LaunchAgents/{health.PLIST_LABEL}.plist")
-            print("  (polls every 5 min; the notification body is a FIXED string, never any"
-                  " therapy data)")
-            return 0
-        print("ok" if health.probe() else "down")
-        return 0
-    except Exception as exc:  # noqa: BLE001 — the watchdog must never fail loudly
-        print(f"health check unavailable: {type(exc).__name__}", file=sys.stderr)
-        return 0
-
-
 def _export_command(args: list[str]) -> int:
     """`dr-alex export --from <date> --to <date> [--redaction summary|full]`."""
     from dr_alex import export
@@ -496,9 +463,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if args and args[0] == "serve":
         return _serve_command(args[1:])
-
-    if args and args[0] == "health":
-        return _health_command(args[1:])
 
     if args and args[0] == "pair":
         return _pair_command()

@@ -46,7 +46,6 @@ data/session_state.json
 data/*.json
 data/.session_state.*.tmp
 data/.checkin.*.tmp
-data/.health.*.tmp
 data/.continuity.*.tmp
 
 # Daemon logs. Body-free by contract (R3: structured facts only, content lives in POST bodies)

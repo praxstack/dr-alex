@@ -120,3 +120,83 @@ def test_statefile_save_survives_an_unsupported_fsync(tmp_path, monkeypatch) -> 
     monkeypatch.setattr(os, "fsync", _boom)
     statefile.save(statefile.SessionState(last_topic="the 30-min block"), p)
     assert statefile.load(p).last_topic == "the 30-min block"
+
+
+def test_update_holds_lock_across_read_modify_write(tmp_path):
+    """A concurrent writer must not be clobbered by a stale in-flight copy.
+
+    This is the fanout race: recover_if_needed writes the crash marker on a worker thread
+    while the main thread finalizes. A hand-rolled load/mutate/save loses one of the two.
+    """
+    import threading
+
+    from dr_alex import statefile
+
+    p = tmp_path / "session_state.json"
+    statefile.save(statefile.SessionState(last_topic="start"), p)
+
+    barrier = threading.Barrier(2)
+    errors: list[BaseException] = []
+
+    def writer_marker() -> None:
+        try:
+            barrier.wait(timeout=5)
+            for _ in range(60):
+                statefile.set_unfinalized(
+                    statefile.UnfinalizedMarker(
+                        session_id="s1", started_at="t", end_ts="t", inbox_filename="f"
+                    ),
+                    p,
+                )
+        except BaseException as exc:  # noqa: BLE001 - surfaced via `errors`
+            errors.append(exc)
+
+    def writer_topic() -> None:
+        try:
+            barrier.wait(timeout=5)
+            for i in range(60):
+                statefile.update(lambda st, i=i: setattr(st, "last_topic", f"topic-{i}"), p)
+        except BaseException as exc:  # noqa: BLE001 - surfaced via `errors`
+            errors.append(exc)
+
+    threads = [threading.Thread(target=writer_marker), threading.Thread(target=writer_topic)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=20)
+
+    assert not errors, errors
+    final = statefile.load(p)
+    # Both writers' fields survive: neither was clobbered by a stale read-modify-write.
+    assert final.unfinalized is not None, "crash marker lost to a racing writer"
+    assert final.last_topic is not None and final.last_topic.startswith("topic-")
+
+
+def test_finalize_state_uses_atomic_update(tmp_path):
+    """fanout._finalize_state must not hand-roll load/mutate/save."""
+    import inspect
+
+    from dr_alex import fanout
+
+    src = inspect.getsource(fanout._finalize_state)
+    assert "statefile.update(" in src, "must use the atomic RMW API"
+    assert "statefile.save(" not in src, "hand-rolled save reintroduces the race"
+
+
+def test_keep_marker_path_touches_nothing(tmp_path):
+    """keep_marker=True must not read or write the state file at all."""
+    from types import SimpleNamespace
+
+    from dr_alex import fanout, statefile
+
+    p = tmp_path / "session_state.json"
+    marker = statefile.UnfinalizedMarker(
+        session_id="s1", started_at="t", end_ts="t", inbox_filename="f"
+    )
+    statefile.set_unfinalized(marker, p)
+    before = p.read_text(encoding="utf-8")
+
+    digest = SimpleNamespace(ended_at="2026-07-26T00:00:00Z", last_topic="x")
+    fanout._finalize_state(marker, digest, p, keep_marker=True)
+
+    assert p.read_text(encoding="utf-8") == before, "keep_marker path must be a no-op on disk"
