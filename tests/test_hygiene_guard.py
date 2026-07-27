@@ -80,27 +80,69 @@ def test_only_sanctioned_git_remotes() -> None:
     )
 
 
-def test_no_undocumented_silent_exception_handlers():
-    """`except Exception: pass` must be a deliberate, marked decision — never a default.
 
-    A swallowed exception in this app is not a style issue: the handlers fixed in this pass
-    were hiding a failed crash-recovery replay, an unwritten session-end stamp, and dropped
-    safety-audit lines. Any new silent handler must say SILENT-BY-DESIGN and why.
+def _catches_broadly(handler) -> bool:
+    """True if this handler swallows Exception/BaseException, or is a bare ``except:``.
+
+    Handles the forms a line-regex misses: bare except, tuple handlers, and one-liners.
     """
-    import re
+    import ast
 
-    offenders = []
-    for path in sorted((_ROOT / "dr_alex").rglob("*.py")):
-        lines = path.read_text(encoding="utf-8").splitlines()
-        for i, line in enumerate(lines):
-            if not re.match(r"\s*except\s+Exception[^:]*:\s*(#.*)?$", line):
+    def _is_broad(node) -> bool:
+        return isinstance(node, ast.Name) and node.id in {"Exception", "BaseException"}
+
+    if handler.type is None:  # bare `except:`
+        return True
+    if isinstance(handler.type, ast.Tuple):
+        return any(_is_broad(e) for e in handler.type.elts)
+    return _is_broad(handler.type)
+
+
+def test_no_undocumented_silent_exception_handlers():
+    """`except ...: pass` must be a deliberate, marked decision — never a default.
+
+    A swallowed exception here is not a style issue: the handlers fixed in this pass were
+    hiding a failed crash-recovery replay, an unwritten session-end stamp, dropped
+    safety-audit lines, and lost mood records. Any new silent handler must carry
+    SILENT-BY-DESIGN and a reason.
+
+    Uses the AST rather than a regex, because the regex version missed one-liners
+    (`except Exception: pass`), tuple handlers (`except (Exception, OSError):`),
+    `BaseException`, and a `pass` preceded by a comment — and it only scanned ``dr_alex/``,
+    leaving ``safety/`` (the package AGENTS.md names first) unguarded.
+    """
+    import ast
+
+    offenders: list[str] = []
+    for pkg in ("dr_alex", "safety"):
+        root = _ROOT / pkg
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*.py")):
+            src = path.read_text(encoding="utf-8")
+            lines = src.splitlines()
+            try:
+                tree = ast.parse(src)
+            except SyntaxError:  # pragma: no cover - a broken file fails elsewhere
                 continue
-            body = [x for x in lines[i + 1 : i + 3] if x.strip()]
-            if not body or body[0].strip() != "pass":
-                continue
-            if "SILENT-BY-DESIGN" in line:
-                continue
-            offenders.append(f"{path.relative_to(_ROOT)}:{i + 1}")
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ExceptHandler):
+                    continue
+                if not all(isinstance(stmt, ast.Pass) for stmt in node.body):
+                    continue
+                # Only BROAD catches are the hazard. `except OSError: pass` around a chmod is a
+                # legitimate, readable idiom; `except Exception: pass` is how a failed
+                # crash-recovery replay went unnoticed. Marking the narrow ones too would just
+                # devalue the marker.
+                if not _catches_broadly(node):
+                    continue
+                # The marker may sit on the `except` line or anywhere in the handler body.
+                span = lines[node.lineno - 1 : (node.end_lineno or node.lineno)]
+                if any("SILENT-BY-DESIGN" in ln for ln in span):
+                    continue
+                offenders.append(f"{path.relative_to(_ROOT)}:{node.lineno}")
+
     assert not offenders, (
-        "silent exception handlers must log or be marked SILENT-BY-DESIGN: " + ", ".join(offenders)
+        "silent exception handlers must log, or be marked SILENT-BY-DESIGN with a reason: "
+        + ", ".join(offenders)
     )
