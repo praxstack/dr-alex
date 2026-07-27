@@ -336,15 +336,15 @@ class DrAlexApp(App[None]):
                     "flagging it gently; sleep tends to be load-bearing for how the days feel.[/dim]",
                 )
             self._refresh_rail()
-        except Exception:  # noqa: BLE001 — startup telemetry is best-effort
-            pass
+        except Exception as exc:  # noqa: BLE001 — startup telemetry is best-effort
+            _log.warning("startup telemetry/rail failed: %s", type(exc).__name__)
 
     def _refresh_rail(self) -> None:
         try:
             data = rail_data()
             self.query_one("#rail", Static).update(render_rail(data))
-        except Exception:  # noqa: BLE001 — the rail must never break the UI
-            pass
+        except Exception as exc:  # noqa: BLE001 — the rail must never break the UI
+            _log.warning("rail refresh failed: %s", type(exc).__name__)
 
     @work(thread=True, group="filevault")
     def _check_filevault(self) -> None:
@@ -361,8 +361,8 @@ class DrAlexApp(App[None]):
             widget = self.query_one("#fv-banner", Static)
             widget.update(f"⚠ {escape(text)}")
             widget.add_class("on")
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001 — a banner must never break the UI
+            _log.warning("filevault banner not shown: %s", type(exc).__name__)
 
     def _show_checkin_banner(self) -> None:
         try:
@@ -371,8 +371,8 @@ class DrAlexApp(App[None]):
             if banner:
                 self._add_message("note", f"[b]note:[/b] {escape(banner)}")
                 checkin.clear_pending()
-        except Exception:  # noqa: BLE001 — the banner must never break startup
-            pass
+        except Exception as exc:  # noqa: BLE001 — a banner must never break the UI
+            _log.warning("check-in banner not shown: %s", type(exc).__name__)
 
     def _show_staleness_banner(self) -> None:
         try:
@@ -393,8 +393,8 @@ class DrAlexApp(App[None]):
         """Complete any crashed fan-out, then assemble the once-per-session memory context."""
         try:
             fanout.recover_if_needed()
-        except Exception:  # noqa: BLE001 — recovery is best-effort; never block a session
-            pass
+        except Exception as exc:  # noqa: BLE001 — recovery is best-effort; never block a session
+            _log.warning("crashed-fanout recovery FAILED: %s — therapy memory for the previous session may remain unreplayed", type(exc).__name__)
         try:
             mem = engine.assemble_startup_memory()
             sp = engine.system_prompt_with_memory(mem)
@@ -493,8 +493,8 @@ class DrAlexApp(App[None]):
                 widget.add_class("on")
             else:
                 widget.remove_class("on")
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001 — an indicator must never break the UI
+            _log.warning("voice indicator update failed: %s", type(exc).__name__)
 
     @work(thread=True, exclusive=True, group="voice")
     def _finish_voice(self) -> None:
@@ -528,8 +528,8 @@ class DrAlexApp(App[None]):
         if event.value is not None:
             try:
                 statedb.record_mood(phase, event.value, session_id=self._session_id)
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001 — a mood chip must never break the turn
+                _log.warning("mood not recorded: %s", type(exc).__name__)
             self._add_message("note", f"[dim]mood noted — {event.value}/10. thanks for marking it.[/dim]")
             self._refresh_rail()
         # After the "arriving" chip (chosen or skipped), flip the bar to the "leaving" chip.
@@ -538,8 +538,8 @@ class DrAlexApp(App[None]):
             try:
                 self.query_one(MoodBar).phase = "close"
                 self.query_one(".mood-label", Label).update("And how are you leaving things? (1–10)")
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001 — the mood prompt must never break the UI
+                _log.warning("close-mood prompt not shown: %s", type(exc).__name__)
 
     # -- the safety-first turn --------------------------------------------
 
@@ -624,8 +624,8 @@ class DrAlexApp(App[None]):
         # independently of the memory store and is best-effort.
         try:
             statedb.end_session(self._session_id)
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001 — session end must never crash
+            _log.warning("end_session stamp not written: %s — streaks and the late-night monitor will be short one session", type(exc).__name__)
         if self._finalized or not memstore.memory_enabled():
             return
         if not fanout.should_finalize(self._user_turns, explicit_close=self._explicit_close):
@@ -647,8 +647,8 @@ class DrAlexApp(App[None]):
                     "session %s: inbox scrub failed — digest withheld, marker kept for "
                     "recovery at next start (no data dropped)", self._session_id,
                 )
-        except Exception:  # noqa: BLE001 — session end must never crash on the way out
-            pass
+        except Exception as exc:  # noqa: BLE001 — session end must never crash on the way out
+            _log.warning("session-end fan-out raised: %s", type(exc).__name__)
 
 
 _TIER_RANK = {Tier.GREEN: 0, Tier.AMBER: 1, Tier.RED: 2}

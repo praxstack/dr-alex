@@ -71,8 +71,9 @@ class ThreadingTimerScheduler:
         if hasattr(handle, "cancel"):
             try:
                 handle.cancel()  # type: ignore[union-attr]
-            except Exception:  # noqa: BLE001 — cancellation must never crash the flush path
-                pass
+            except Exception as exc:  # noqa: BLE001 — cancellation must never crash the flush
+                # A timer that would not cancel can still fire and flush a stale fragment.
+                logger.warning("debounce timer cancel failed: %s", type(exc).__name__)
 
 
 class FlushReason:

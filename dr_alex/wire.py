@@ -82,5 +82,11 @@ def audit_turn(
             list(memory_ids or []),
             bool(empty_guarded),
         )
-    except Exception:  # noqa: BLE001 — the audit line must never break delivery
-        pass
+    except Exception as exc:  # noqa: BLE001 — the audit line must never break delivery
+        # A dropped audit line is itself the incident: this record is how a turn's safety
+        # path is reconstructed afterwards. Report it on the module logger, and if THAT is
+        # also broken, fall silent rather than recurse.
+        try:
+            _wire_log.warning("wire audit line dropped: %s", type(exc).__name__)
+        except Exception:  # noqa: BLE001 — SILENT-BY-DESIGN: logging a logger failure recurses
+            pass
