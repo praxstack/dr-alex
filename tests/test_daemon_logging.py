@@ -9,6 +9,7 @@ configures only its own loggers). These tests assert DELIVERY instead.
 from __future__ import annotations
 
 import logging
+import time
 
 import pytest
 
@@ -128,3 +129,45 @@ def test_daemon_logs_are_not_in_tmp() -> None:
     # The dir must be tracked (empty) — launchd does not create intermediate directories and
     # silently discards output when it cannot open the path.
     assert (root / "logs" / ".gitkeep").exists()
+
+
+def test_periodic_launchd_log_trimmer_fires_while_serving(tmp_path):
+    """The trimmer must run for the LIFE of the process, not once at startup.
+
+    Startup-only trimming bounds nothing on a daemon meant to stay up for weeks — which is
+    exactly this one. Drives a real app through its lifespan with a compressed interval.
+    """
+    from unittest import mock
+
+    from fastapi.testclient import TestClient
+
+    from dr_alex import alexd
+
+    big = tmp_path / "dr-alex-alexd.err.log"
+    big.write_bytes(b"x" * 500)
+
+    with (
+        mock.patch.object(alexd, "log_dir", lambda: tmp_path),
+        mock.patch.object(alexd, "_LAUNCHD_LOG_MAX_BYTES", 100),
+        mock.patch.object(alexd, "_LAUNCHD_LOG_TRIM_INTERVAL_S", 0.05),
+        TestClient(alexd.create_app()) as client,
+    ):
+        client.get("/healthz")
+        deadline = time.time() + 5
+        while time.time() < deadline and big.stat().st_size > 100:
+            time.sleep(0.05)
+
+    assert big.stat().st_size == 0, "periodic trim never fired"
+    assert (tmp_path / "dr-alex-alexd.err.log.1").exists(), "previous content not preserved"
+
+
+def test_lifespan_shutdown_does_not_hang(tmp_path):
+    """Exiting the app must cancel the trimmer promptly — a shutdown that hangs is an outage."""
+    from fastapi.testclient import TestClient
+
+    from dr_alex import alexd
+
+    started = time.time()
+    with TestClient(alexd.create_app()) as client:
+        client.get("/healthz")
+    assert time.time() - started < 10, "lifespan shutdown hung on the background task"

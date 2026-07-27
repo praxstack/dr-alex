@@ -21,7 +21,6 @@ Hard invariants enforced here:
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 import mimetypes
@@ -314,8 +313,12 @@ async def _lifespan(_app: FastAPI):  # pragma: no cover - lifecycle
     finally:
         if task is not None:
             task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await task
+            # Wait for the child WITHOUT letting its cancellation propagate as ours: a bare
+            # `suppress(CancelledError)` around `await task` also swallows an outer cancel
+            # aimed at this lifespan, which would eat the shutdown signal itself.
+            done, _pending = await asyncio.wait({task}, timeout=5)
+            if not done:
+                _log.warning("log trimmer did not stop within 5s; abandoning it")
 
 
 def create_app() -> FastAPI:

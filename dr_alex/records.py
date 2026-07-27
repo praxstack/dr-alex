@@ -25,11 +25,10 @@ from __future__ import annotations
 import datetime as _dt
 import os
 import re
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from dr_alex import config, timeutil
+from dr_alex import atomicio, config, timeutil
 from dr_alex.digest import SessionDigest
 
 # Top-level section headers, in canonical order.
@@ -91,29 +90,17 @@ def _ensure_dir(p: Path) -> None:
 
 
 def _write(p: Path, text: str) -> None:
-    """Atomically replace the Active File (temp + ``os.replace``), 0600.
+    """Atomically replace the Active File, 0600.
 
     The canonical record has no backup (``records/`` is gitignored and the G19 bundle only
     carries tracked refs), and ``update_from_digest`` is read-modify-write: a truncate-in-place
     write that then fails on I/O would leave an empty file whose human-owned sections the NEXT
-    session silently rebuilds from defaults. Same idiom as ``statefile.save`` /
-    ``checkin._save``; the extra ``fsync`` runs BEFORE the replace, so a failure leaves the
-    previous good file intact. Raises ``OSError`` on failure exactly as ``write_text`` did.
+    session silently rebuilds from defaults. Delegates to the single shared implementation so
+    this can never drift from the other durable writers again. Raises ``OSError`` on failure
+    exactly as ``write_text`` did.
     """
     _ensure_dir(p)
-    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=".Active-File.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(text)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.chmod(tmp, 0o600)  # before the replace: never briefly visible at umask perms
-        os.replace(tmp, p)
-    finally:
-        try:
-            os.unlink(tmp)  # no-op on the success path (the name is gone after replace)
-        except OSError:
-            pass
+    atomicio.atomic_write_text(p, text, prefix=".Active-File.")
 
 
 def read_text(path: Path | None = None) -> str | None:
