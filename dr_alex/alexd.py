@@ -20,6 +20,8 @@ Hard invariants enforced here:
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
 import mimetypes
@@ -27,6 +29,7 @@ import os
 import shutil
 import signal
 import threading as _threading
+from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -292,8 +295,38 @@ def _asset_response(name: str) -> Response:
 # ---------------------------------------------------------------------------
 
 
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):  # pragma: no cover - lifecycle
+    """Own the background log-trimmer for exactly as long as the app is serving.
+
+    Uses the lifespan protocol rather than the deprecated ``@app.on_event`` hooks, so this
+    keeps working when Starlette drops them. Startup must never be able to fail here: a
+    logging-hygiene task that prevents the daemon from booting is strictly worse than an
+    unbounded log file.
+    """
+    task: asyncio.Task | None = None
+    try:
+        task = asyncio.create_task(_trim_launchd_logs_forever())
+    except RuntimeError as exc:  # no running loop (shouldn't happen under uvicorn)
+        _log.warning("log trimmer not started: %s", type(exc).__name__)
+    try:
+        yield
+    finally:
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title="alexd", docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(
+        title="alexd",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+        lifespan=_lifespan,
+    )
+
 
     # -- ungated: static shell + manifest + service worker ----------------
 
@@ -631,6 +664,10 @@ _LOG_BACKUPS = 3
 #: daemon is the only thing that can bound them (see :func:`_trim_launchd_logs`).
 _LAUNCHD_LOG_MAX_BYTES = 8_000_000
 
+#: How often the running daemon re-checks that cap. Startup-only trimming bounds nothing on a
+#: daemon that stays up for weeks — which is the whole point of this one.
+_LAUNCHD_LOG_TRIM_INTERVAL_S = 3600.0
+
 #: The launchd-captured files, as named by ``tools/launchd/com.prax.dralex-alexd.plist``.
 _LAUNCHD_LOG_NAMES = ("dr-alex-alexd.err.log", "dr-alex-alexd.out.log")
 
@@ -713,6 +750,28 @@ def _trim_launchd_logs() -> None:
             os.truncate(str(p), 0)
         except OSError:
             continue
+
+
+async def _trim_launchd_logs_forever() -> None:
+    """Re-check the launchd log cap on a timer for as long as the daemon lives.
+
+    Trimming only at startup bounds nothing: this daemon is meant to stay up for weeks, and
+    the file it cannot rotate is the one carrying every uvicorn access line. A restart-driven
+    cap is a cap that only applies to daemons which crash — precisely the ones that were
+    already visible. Cancelled at shutdown; never raises, because a logging-hygiene task must
+    never be able to take down the service it is logging for.
+    """
+    while True:
+        try:
+            await asyncio.sleep(_LAUNCHD_LOG_TRIM_INTERVAL_S)
+        except asyncio.CancelledError:  # shutdown
+            raise
+        try:
+            await asyncio.to_thread(_trim_launchd_logs)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — hygiene must never kill the daemon
+            _log.warning("launchd log trim failed: %s", type(exc).__name__)
 
 
 def pidfile_path() -> Path:
