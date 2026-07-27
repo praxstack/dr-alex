@@ -161,6 +161,10 @@ def update(mutate: Callable[[SessionState], None], path: Path | None = None) -> 
     ``mutate`` runs while the lock is held, so keep it pure and fast: no I/O, no LLM calls, no
     re-entry into other ``statefile`` functions except the ones documented as re-entrant. Raising
     from ``mutate`` aborts the write and leaves the previous state intact.
+
+    The returned state is a SNAPSHOT for reading. Mutating it does not persist anything, and
+    passing it back to ``save()`` re-introduces exactly the lost-update this function exists
+    to prevent — call ``update()`` again instead.
     """
     with _LOCK:
         st = load(path)

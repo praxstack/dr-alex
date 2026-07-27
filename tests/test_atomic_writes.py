@@ -122,54 +122,45 @@ def test_statefile_save_survives_an_unsupported_fsync(tmp_path, monkeypatch) -> 
     assert statefile.load(p).last_topic == "the 30-min block"
 
 
-def test_update_holds_lock_across_read_modify_write(tmp_path):
-    """A concurrent writer must not be clobbered by a stale in-flight copy.
+def test_update_is_a_true_lost_update_test(tmp_path):
+    """Two threads incrementing the SAME field must both be counted.
 
-    This is the fanout race: recover_if_needed writes the crash marker on a worker thread
-    while the main thread finalizes. A hand-rolled load/mutate/save loses one of the two.
+    The earlier version of this test had each thread write a DIFFERENT field, so a lost
+    update was undetectable and the assertion held even with no locking at all. This
+    version fails loudly if `update()` ever stops holding the lock across load→mutate→save:
+    an unlocked read-modify-write drops increments and the final count comes in under 2N.
     """
     import threading
 
     from dr_alex import statefile
 
     p = tmp_path / "session_state.json"
-    statefile.save(statefile.SessionState(last_topic="start"), p)
+    statefile.save(statefile.SessionState(last_topic="0"), p)
 
-    barrier = threading.Barrier(2)
+    N = 75
+    start = threading.Barrier(2)
     errors: list[BaseException] = []
 
-    def writer_marker() -> None:
+    def bump() -> None:
         try:
-            barrier.wait(timeout=5)
-            for _ in range(60):
-                statefile.set_unfinalized(
-                    statefile.UnfinalizedMarker(
-                        session_id="s1", started_at="t", end_ts="t", inbox_filename="f"
-                    ),
-                    p,
+            start.wait(timeout=5)
+            for _ in range(N):
+                statefile.update(
+                    lambda st: setattr(st, "last_topic", str(int(st.last_topic or "0") + 1)), p
                 )
         except BaseException as exc:  # noqa: BLE001 - surfaced via `errors`
             errors.append(exc)
 
-    def writer_topic() -> None:
-        try:
-            barrier.wait(timeout=5)
-            for i in range(60):
-                statefile.update(lambda st, i=i: setattr(st, "last_topic", f"topic-{i}"), p)
-        except BaseException as exc:  # noqa: BLE001 - surfaced via `errors`
-            errors.append(exc)
-
-    threads = [threading.Thread(target=writer_marker), threading.Thread(target=writer_topic)]
+    threads = [threading.Thread(target=bump, daemon=True) for _ in range(2)]
     for t in threads:
         t.start()
     for t in threads:
-        t.join(timeout=20)
+        t.join(timeout=30)
 
+    # A deadlock must FAIL, not silently pass by timing out the join.
+    assert not any(t.is_alive() for t in threads), "update() deadlocked"
     assert not errors, errors
-    final = statefile.load(p)
-    # Both writers' fields survive: neither was clobbered by a stale read-modify-write.
-    assert final.unfinalized is not None, "crash marker lost to a racing writer"
-    assert final.last_topic is not None and final.last_topic.startswith("topic-")
+    assert int(statefile.load(p).last_topic) == 2 * N, "lost update: the lock is not held across RMW"
 
 
 def test_finalize_state_uses_atomic_update(tmp_path):

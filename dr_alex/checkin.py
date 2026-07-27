@@ -24,9 +24,10 @@ import json
 import logging
 import os
 import subprocess
-import tempfile
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
+
+from dr_alex import atomicio
 
 _log = logging.getLogger("dr_alex.checkin")
 
@@ -91,30 +92,15 @@ def _load(path: Path | None = None) -> CheckinState:
 
 
 def _save(state: CheckinState, path: Path | None = None) -> None:
+    """Persist the check-in state atomically, 0600.
+
+    Previously this was the ONLY durable writer with no ``fsync`` at all, while a sibling's
+    docstring claimed it was "the same idiom" — the exact drift the shared writer exists to
+    prevent. The state it holds is what stops a duplicate notification for the same day.
+    """
     p = path or state_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        os.chmod(p.parent, 0o700)
-    except OSError:
-        pass
-    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=".checkin.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump({
-                "pending": state.pending,
-                "last_notified_ts": state.last_notified_ts,
-                "last_cleared_ts": state.last_cleared_ts,
-            }, fh)
-        os.replace(tmp, p)
-        try:
-            os.chmod(p, 0o600)
-        except OSError:
-            pass
-    finally:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+    atomicio.atomic_write_text(p, json.dumps(asdict(state), ensure_ascii=False, indent=2),
+                               prefix=".checkin.")
 
 
 def mark_pending(*, now: _dt.datetime | None = None, path: Path | None = None) -> None:
