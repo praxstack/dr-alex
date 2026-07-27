@@ -242,8 +242,8 @@ class NotionClient:
         if self._owns_http:
             try:
                 self._http.close()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001 — closing must never raise on the way out
+                _log.warning("notion http client close failed: %s", type(exc).__name__)
 
     def __enter__(self) -> NotionClient:
         return self

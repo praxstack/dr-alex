@@ -91,8 +91,8 @@ def begin(
             digest.mood_in = open_mood
         if close_mood is not None:
             digest.mood_out = close_mood
-    except Exception:  # noqa: BLE001 — the mood seam is best-effort
-        pass
+    except Exception as exc:  # noqa: BLE001 — the mood seam is best-effort
+        _log.warning("mood seam unavailable for digest: %s", type(exc).__name__)
     marker = UnfinalizedMarker(
         session_id=session_id,
         started_at=started_at,
@@ -280,19 +280,25 @@ def _finalize_state(marker, digest, state_path, *, keep_marker: bool = False) ->
     only advanced on a fully-finalized session, so the staleness banner never claims a brief
     is fresh while its regeneration is still pending.
     """
-    st = statefile.load(state_path)
     if keep_marker:
         # Preserve the crash-safety marker persisted by the per-step ledger; a later replay
         # completes the fan-out and finalizes for real. Do not advance the G8 stamps yet.
+        # Checked before touching the state file at all — this path reads nothing and writes
+        # nothing, so it cannot race the recovery worker.
         return
-    # generated_at is the session's end whether the brief was (re)written this run or a prior
-    # crashed one — so the G8 banner stays accurate across replay.
-    st.continuity_generated_at = digest.ended_at
-    st.last_session_at = digest.ended_at
-    if digest.last_topic:
-        st.last_topic = digest.last_topic
-    st.unfinalized = None
-    statefile.save(st, state_path)
+
+    def _apply(st) -> None:
+        # generated_at is the session's end whether the brief was (re)written this run or a
+        # prior crashed one — so the G8 banner stays accurate across replay.
+        st.continuity_generated_at = digest.ended_at
+        st.last_session_at = digest.ended_at
+        if digest.last_topic:
+            st.last_topic = digest.last_topic
+        st.unfinalized = None
+
+    # statefile.update holds the lock across load→mutate→save. Doing this as a bare
+    # load/mutate/save would drop the marker written by a concurrent recovery worker.
+    statefile.update(_apply, state_path)
 
 
 def finalize_session(

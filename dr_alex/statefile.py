@@ -21,6 +21,7 @@ import json
 import os
 import tempfile
 import threading
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -28,12 +29,14 @@ from dr_alex import paths
 
 _STATE_RELPATH = ("data", "session_state.json")
 
-#: Serializes the load→mutate→save cycles below. The TUI runs ``fanout.recover_if_needed`` on a
-#: Textual ``@work(thread=True)`` worker while the main thread can enter ``finalize_session`` —
-#: two interleaved read-modify-writes would clobber one crash marker. Re-entrant because
-#: ``set_unfinalized``/``clear_unfinalized`` call ``save`` while holding it. Deliberately
-#: in-process only: a cross-process lockfile would add a stale-lock hang at 3am for a case
-#: (two TUIs at once) that does not occur.
+#: Serializes every read-modify-write of the state file. The TUI runs
+#: ``fanout.recover_if_needed`` on a Textual ``@work(thread=True)`` worker while the main
+#: thread can enter ``finalize_session`` — two interleaved read-modify-writes would clobber
+#: one crash marker. The lock only helps if the WHOLE cycle is inside it, which is why
+#: ``update()`` exists and why callers must not hand-roll load/mutate/save. Re-entrant
+#: because ``update`` calls ``save`` while holding it. Deliberately in-process only: a
+#: cross-process lockfile would add a stale-lock hang at 3am for a case (two TUIs at once)
+#: that does not occur.
 _LOCK = threading.RLock()
 
 
@@ -146,15 +149,40 @@ def save(state: SessionState, path: Path | None = None) -> None:
             raise
 
 
-def set_unfinalized(marker: UnfinalizedMarker, path: Path | None = None) -> None:
+def update(mutate: Callable[[SessionState], None], path: Path | None = None) -> SessionState:
+    """Atomically read-modify-write the state file; returns the state as persisted.
+
+    THIS IS THE ONLY CORRECT WAY TO CHANGE AN EXISTING FIELD. A caller that does its own
+    ``load()`` → mutate → ``save()`` holds no lock across the gap, so a concurrent writer's
+    change is silently clobbered by the stale copy — and the field most likely to be lost is
+    ``unfinalized``, the crash-recovery marker. Losing it means a crashed fan-out is never
+    replayed and the continuity brief stays silently stale.
+
+    ``mutate`` runs while the lock is held, so keep it pure and fast: no I/O, no LLM calls, no
+    re-entry into other ``statefile`` functions except the ones documented as re-entrant. Raising
+    from ``mutate`` aborts the write and leaves the previous state intact.
+    """
     with _LOCK:
         st = load(path)
-        st.unfinalized = asdict(marker)
+        mutate(st)
         save(st, path)
+        return st
+
+
+def set_unfinalized(marker: UnfinalizedMarker, path: Path | None = None) -> None:
+    """Persist the crash-recovery marker. Atomic against concurrent writers."""
+    payload = asdict(marker)
+
+    def _set(st: SessionState) -> None:
+        st.unfinalized = payload
+
+    update(_set, path)
 
 
 def clear_unfinalized(path: Path | None = None) -> None:
-    with _LOCK:
-        st = load(path)
+    """Drop the crash-recovery marker. Atomic against concurrent writers."""
+
+    def _clear(st: SessionState) -> None:
         st.unfinalized = None
-        save(st, path)
+
+    update(_clear, path)

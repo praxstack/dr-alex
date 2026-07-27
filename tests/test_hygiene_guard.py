@@ -32,7 +32,7 @@ _FORBIDDEN = (
     re.compile(r"\.extracted\.txt$"),            # Phase 2b: derived PDF extraction caches
     re.compile(r"^data/improve/"),               # G22: persona self-improvement audit/changelog
     re.compile(r"^logs/.*\.log"),                # daemon logs (body-free, but derived + local)
-    re.compile(r"^data/\.(checkin|health|continuity)\.[^/]*\.tmp$"),  # atomic-write temps
+    re.compile(r"^data/\.(checkin|continuity)\.[^/]*\.tmp$"),  # atomic-write temps
 )
 
 
@@ -77,4 +77,30 @@ def test_only_sanctioned_git_remotes() -> None:
     remotes = {name: _git("remote", "get-url", name).strip() for name in _git("remote").split()}
     assert remotes == _SANCTIONED_REMOTES, (
         f"R1 violation — unsanctioned git remote(s): {remotes} != {_SANCTIONED_REMOTES}"
+    )
+
+
+def test_no_undocumented_silent_exception_handlers():
+    """`except Exception: pass` must be a deliberate, marked decision — never a default.
+
+    A swallowed exception in this app is not a style issue: the handlers fixed in this pass
+    were hiding a failed crash-recovery replay, an unwritten session-end stamp, and dropped
+    safety-audit lines. Any new silent handler must say SILENT-BY-DESIGN and why.
+    """
+    import re
+
+    offenders = []
+    for path in sorted((_ROOT / "dr_alex").rglob("*.py")):
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for i, line in enumerate(lines):
+            if not re.match(r"\s*except\s+Exception[^:]*:\s*(#.*)?$", line):
+                continue
+            body = [x for x in lines[i + 1 : i + 3] if x.strip()]
+            if not body or body[0].strip() != "pass":
+                continue
+            if "SILENT-BY-DESIGN" in line:
+                continue
+            offenders.append(f"{path.relative_to(_ROOT)}:{i + 1}")
+    assert not offenders, (
+        "silent exception handlers must log or be marked SILENT-BY-DESIGN: " + ", ".join(offenders)
     )
