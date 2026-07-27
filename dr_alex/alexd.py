@@ -24,8 +24,10 @@ import json
 import logging
 import mimetypes
 import os
+import shutil
 import signal
 import threading as _threading
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -136,8 +138,9 @@ class RoomSession:
             mem = engine.assemble_startup_memory()
             self.system_prompt = engine.system_prompt_with_memory(mem)
             self.memory_ids = list(mem.recalled_ids)
-        except Exception:  # noqa: BLE001 — a broken store must never break session start
-            pass
+        except Exception as exc:  # noqa: BLE001 — a broken store must never break session start
+            # Body-free (R3): the exception CLASS only, never the store contents.
+            _log.warning("session-start memory assembly failed: %s", type(exc).__name__)
 
 
 _sessions: dict[str, RoomSession] = {}
@@ -205,6 +208,26 @@ def _run_turn_blocking(sess: RoomSession, text: str) -> engine.TurnOutcome:
 # ---------------------------------------------------------------------------
 # Static asset serving (the PWA shell — ungated, self-contained, offline-cacheable)
 # ---------------------------------------------------------------------------
+
+
+def _health_checks() -> dict[str, bool]:
+    """Cheap, read-only subsystem probes for ``/healthz``. Never raises, never writes."""
+    checks: dict[str, bool] = {}
+    try:  # the PWA shell the phone loads
+        checks["room_shell"] = (ROOM_DIR / "index.html").is_file()
+    except OSError:
+        checks["room_shell"] = False
+    try:  # the offline crisis card — the one surface that must exist at 3am
+        checks["crisis_card"] = (ROOM_DIR / "crisis.html").is_file() and bool(
+            crisis_card.render_text().strip()
+        )
+    except Exception:  # noqa: BLE001
+        checks["crisis_card"] = False
+    try:
+        checks["statedb"] = statedb.healthy()
+    except Exception:  # noqa: BLE001
+        checks["statedb"] = False
+    return checks
 
 
 def _read_room(name: str) -> str | None:
@@ -315,7 +338,20 @@ def create_app() -> FastAPI:
 
     @app.get("/healthz")
     async def healthz() -> JSONResponse:
-        return JSONResponse({"ok": True, "service": "alexd", "loopback": True})
+        """Real subsystem health. Shape is backward-compatible: ``ok`` is still True when well.
+
+        Checks only what a 3am turn actually needs, and only with cheap read-only probes:
+        the PWA shell + the static crisis card (the one surface that must never be missing —
+        this daemon crash-looped 1,810 times over exactly that class of fault), and the state
+        store. Absent-but-lazily-created is NOT a fault. Never raises; ``checks`` is additive.
+        """
+        checks = _health_checks()
+        return JSONResponse({
+            "ok": all(checks.values()),
+            "service": "alexd",
+            "loopback": True,
+            "checks": checks,
+        })
 
     # -- ungated (pairing-code protected): device pairing exchange --------
 
@@ -348,8 +384,8 @@ def create_app() -> FastAPI:
         sess = _get_or_create_session(payload.get("session_id"))
         try:
             statedb.start_session(sess.session_id, is_test_traffic=sess.test_traffic)
-        except Exception:  # noqa: BLE001 — telemetry never blocks a session
-            pass
+        except Exception as exc:  # noqa: BLE001 — telemetry never blocks a session
+            _log.warning("start_session telemetry failed: %s", type(exc).__name__)
         # Optional arriving mood chip (1–10).
         mood = _as_mood(payload.get("mood"))
         if mood is not None:
@@ -360,7 +396,8 @@ def create_app() -> FastAPI:
         ack = None
         try:
             ack = telemetry.take_repair_ack()
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("repair-ack fetch failed: %s", type(exc).__name__)
             ack = None
         return JSONResponse({
             "session_id": sess.session_id,
@@ -391,13 +428,14 @@ def create_app() -> FastAPI:
             if leftover:
                 try:
                     await run_in_threadpool(_run_turn_blocking, sess, leftover)
-                except Exception:  # noqa: BLE001 — finalize must never fail on a leftover turn
-                    pass
+                except Exception as exc:  # noqa: BLE001 — finalize must never fail on a leftover turn
+                    # NEVER log ``leftover`` itself (R3) — the exception class only.
+                    _log.warning("session-end leftover turn failed: %s", type(exc).__name__)
         if sid:
             try:
                 statedb.end_session(sid)
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                _log.warning("end_session telemetry failed: %s", type(exc).__name__)
             _sessions.pop(sid, None)
         return JSONResponse({"ok": True})
 
@@ -456,8 +494,8 @@ def create_app() -> FastAPI:
         sess = _get_or_create_session(payload.get("session_id"))
         try:
             statedb.start_session(sess.session_id, is_test_traffic=sess.test_traffic)
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("checkin start_session telemetry failed: %s", type(exc).__name__)
         mood = _as_mood(payload.get("mood"))
         if mood is not None:
             _record_mood(sess, "open", mood)
@@ -473,7 +511,8 @@ def create_app() -> FastAPI:
     async def homework_list() -> JSONResponse:
         try:
             items = statedb.open_homework()
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("open_homework failed: %s", type(exc).__name__)
             items = []
         return JSONResponse({"homework": [
             {"id": h.id, "title": h.title, "assigned_date": h.assigned_date,
@@ -485,7 +524,8 @@ def create_app() -> FastAPI:
     async def homework_done(hw_id: str) -> JSONResponse:
         try:
             ok = statedb.mark_homework_done(hw_id)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("mark_homework_done failed: %s", type(exc).__name__)
             ok = False
         return JSONResponse({"ok": ok})
 
@@ -570,8 +610,8 @@ def _as_mood(value: object) -> int | None:
 def _record_mood(sess: RoomSession, phase: str, mood: int) -> None:
     try:
         statedb.record_mood(phase, mood, session_id=sess.session_id)
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("record_mood failed: %s", type(exc).__name__)
 
 
 #: The module-level app for ``uvicorn dr_alex.alexd:app``.
@@ -581,6 +621,98 @@ app = create_app()
 # ---------------------------------------------------------------------------
 # Foreground dev server (`dr-alex serve`) — pidfile + loopback hard-assert.
 # ---------------------------------------------------------------------------
+
+
+#: The daemon's own rotating log — hard ceiling 4 × 1 MB.
+_LOG_MAX_BYTES = 1_000_000
+_LOG_BACKUPS = 3
+
+#: Ceiling on the launchd-captured stdout/stderr files. launchd holds those fds itself, so the
+#: daemon is the only thing that can bound them (see :func:`_trim_launchd_logs`).
+_LAUNCHD_LOG_MAX_BYTES = 8_000_000
+
+#: The launchd-captured files, as named by ``tools/launchd/com.prax.dralex-alexd.plist``.
+_LAUNCHD_LOG_NAMES = ("dr-alex-alexd.err.log", "dr-alex-alexd.out.log")
+
+
+def log_dir() -> Path:
+    """The app's own ``logs/`` dir — a real, persistent directory, never ``/tmp``.
+
+    ``/tmp`` is wiped at every boot on this machine, so a postmortem for an overnight failure
+    was permanently unrecoverable the moment the Mac restarted. This dir is gitignored and the
+    hygiene guard asserts no log ever enters git.
+    """
+    from dr_alex import paths
+
+    found = paths.find("logs")
+    return found if found is not None else (Path(__file__).resolve().parent.parent / "logs")
+
+
+def _configure_daemon_logging() -> None:
+    """Give the body-free audit/trace loggers a real sink. Daemon entrypoint only.
+
+    Without this, ``dr_alex.wire`` / ``dr_alex.trace`` inherit root's WARNING level and have no
+    handler, so every per-turn INFO audit line is dropped before any handler sees it (uvicorn
+    configures only its own loggers and never root). Call sites are untouched — this attaches
+    one level + two handlers to the ``dr_alex`` parent.
+
+    Ordering is deliberate: stderr FIRST, because it needs no path to resolve and no file to
+    open, so logging always works even if the filesystem is hostile. The rotating file is added
+    on top, best-effort — if it cannot be opened the daemon logs a warning and runs stderr-only.
+    Given the 1,810-crash-loop-from-a-missing-file history, opening a file at boot must never
+    be able to take the daemon down.
+    """
+    lg = logging.getLogger("dr_alex")
+    if any(getattr(h, "_dralex_audit_sink", False) for h in lg.handlers):
+        return  # idempotent — serve() may run more than once in a process
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+    stream = logging.StreamHandler()  # defaults to sys.stderr
+    stream.setFormatter(fmt)
+    stream._dralex_audit_sink = True  # type: ignore[attr-defined]
+    lg.addHandler(stream)
+    lg.setLevel(logging.INFO)
+
+    try:
+        d = log_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(d, 0o700)
+        except OSError:
+            pass
+        target = d / "alexd.log"
+        rotating = RotatingFileHandler(
+            target, maxBytes=_LOG_MAX_BYTES, backupCount=_LOG_BACKUPS, encoding="utf-8",
+        )
+        rotating.setFormatter(fmt)
+        rotating._dralex_audit_sink = True  # type: ignore[attr-defined]
+        lg.addHandler(rotating)
+        try:
+            os.chmod(target, 0o600)
+        except OSError:
+            pass
+    except Exception as exc:  # noqa: BLE001 — a log file must never block the daemon
+        lg.warning("file log unavailable, stderr only: %s", type(exc).__name__)
+
+
+def _trim_launchd_logs() -> None:
+    """Bound the launchd-captured stdout/stderr files, preserving the previous content.
+
+    launchd opens those paths itself, in append mode, BEFORE exec — so a plist-side ``mv``
+    would send this run's output into the rotated file, and nothing outside this process can
+    rotate them at all. Copy-aside + truncate-in-place is the one form that works with the fd
+    launchd already holds: an O_APPEND write resumes at the new EOF, so there is no sparse hole
+    and no lost line. Runs once at startup and only above the cap; failure is a no-op.
+    """
+    for name in _LAUNCHD_LOG_NAMES:
+        try:
+            p = log_dir() / name
+            if not p.is_file() or p.stat().st_size <= _LAUNCHD_LOG_MAX_BYTES:
+                continue
+            shutil.copy2(str(p), str(p) + ".1")
+            os.truncate(str(p), 0)
+        except OSError:
+            continue
 
 
 def pidfile_path() -> Path:
@@ -618,6 +750,8 @@ def serve(host: str = HOST, port: int = PORT, *, log_level: str = "info") -> Non
     import uvicorn
 
     require_loopback(host)  # refuse 0.0.0.0 / LAN / any tunnel address
+    _configure_daemon_logging()
+    _trim_launchd_logs()
     _write_pidfile()
 
     def _bye(*_a):  # pragma: no cover - signal path

@@ -33,9 +33,9 @@
 	<key>RunAtLoad</key>
 	<false/>
 	<key>StandardErrorPath</key>
-	<string>/tmp/dr-alex-alexd.err.log</string>
+	<string>/Users/prax/dr-alex/logs/dr-alex-alexd.err.log</string>
 	<key>StandardOutPath</key>
-	<string>/tmp/dr-alex-alexd.out.log</string>
+	<string>/Users/prax/dr-alex/logs/dr-alex-alexd.out.log</string>
 	<key>ThrottleInterval</key>
 	<integer>10</integer>
 	<key>WorkingDirectory</key>

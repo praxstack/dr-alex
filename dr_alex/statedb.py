@@ -200,6 +200,30 @@ def init_db(path: Path | None = None) -> None:
         pass
 
 
+def healthy(path: Path | None = None) -> bool:
+    """Read-only liveness probe for ``/healthz``. Never creates, migrates, or writes.
+
+    True when the store is usable OR has simply not been created yet (it is created lazily on
+    first real use, so "absent" is not "broken"). False only when the file exists and cannot
+    be opened/read — i.e. corrupt, unreadable, or on a dead volume.
+    """
+    if not telemetry_enabled():
+        return True  # kill-switch on: the store is a deliberate no-op, not a fault
+    p = path or state_db_path()
+    if not p.exists():
+        return True
+    try:
+        conn = sqlite3.connect(f"file:{p}?mode=ro", uri=True, timeout=1.0)
+        try:
+            conn.execute("PRAGMA user_version").fetchone()
+        finally:
+            conn.close()
+        return True
+    except Exception:  # noqa: BLE001 — a health probe must never raise
+        _log.warning("statedb health probe failed")
+        return False
+
+
 def _bool(v: object) -> int:
     return 1 if v else 0
 
