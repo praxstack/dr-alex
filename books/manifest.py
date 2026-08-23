@@ -27,7 +27,7 @@ log = logging.getLogger("dr_alex.books")
 
 BOOKS_DIR_ENV = "DR_ALEX_BOOKS_DIR"
 DEFAULT_CORPUS_DIR = Path(
-    "/Users/prax/agent-memory-staging/claude-export/dr-alex-books"
+    "/Users/prax/dr-alex/data/books"
 )
 
 # The supplemental user manifest lives next to the books it registers, so a corpus is
