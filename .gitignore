@@ -76,3 +76,6 @@ inbox/
 # local-only records of autonomous persona edits — never tracked (Directive 3 / R3). The
 # accepted changes live in the git history as revertible commits; these logs are metadata.
 data/improve/
+
+# Book corpus: copyrighted texts stay LOCAL ONLY (index in data/index is derived, also keep out)
+data/books/
