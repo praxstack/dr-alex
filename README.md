@@ -72,6 +72,11 @@ https / 127.0.0.1:8787`), never by widening the bind. Every endpoint except `/cr
 
 ## Scheduled jobs (disabled by default)
 
+> Note (2026-08-23): the shipped plists ship inert as described below, BUT
+> `com.prax.dralex-alexd` has been enabled and IS RUNNING via launchd (KeepAlive on crash,
+> RunAtLoad). That's intended — alexd is the live loopback daemon serving The Room on
+> 127.0.0.1:8787. Don't re-enable the others without deciding to.
+
 The launchd agents in `tools/launchd/` ship **inert** (`Disabled` true, not loaded): alexd,
 the nightly check-in, the G13 eval, and the G22 self-improve loop. Enable one deliberately,
 e.g.:
