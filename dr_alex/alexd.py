@@ -389,6 +389,11 @@ def create_app() -> FastAPI:
             "checks": checks,
         })
 
+    # /readyz and /livez are aliases of /healthz — something local polls those
+    # names and logs 404 spam against them; same body, no new logic.
+    app.add_api_route("/readyz", healthz, methods=["GET"])
+    app.add_api_route("/livez", healthz, methods=["GET"])
+
     # -- ungated (pairing-code protected): device pairing exchange --------
 
     @app.post("/pair")
