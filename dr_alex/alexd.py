@@ -27,6 +27,7 @@ import mimetypes
 import os
 import shutil
 import signal
+import sqlite3
 import threading as _threading
 from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
@@ -42,12 +43,7 @@ from fastapi.responses import (
 from starlette.concurrency import run_in_threadpool
 
 from dr_alex import (
-    continuity as _continuity,
-)
-from dr_alex import (
-    debounce as _debounce,
-)
-from dr_alex import (
+    config,
     engine,
     llm,
     memstore,
@@ -55,7 +51,14 @@ from dr_alex import (
     statedb,
     telemetry,
     timeutil,
+    ulid,
     wire,
+)
+from dr_alex import (
+    continuity as _continuity,
+)
+from dr_alex import (
+    debounce as _debounce,
 )
 from dr_alex.session import SessionState
 from safety import crisis_card, crisis_prescreen
@@ -108,6 +111,7 @@ class RoomSession:
         self.memory_ids: list[str] = []
         self.started_at = _iso_now()
         self.test_traffic = test_traffic
+        self.transcript_policy = "legacy"
         self.mood_phase = "open"
         # Coalesced fragments that a timer/cap flush produced with no live request to stream
         # them back. They are NOT dropped — the next /turn prepends them so the buffered
@@ -153,7 +157,7 @@ def _iso_now() -> str:
 
 
 def _new_session_id() -> str:
-    return _iso_now().replace(":", "").replace("-", "")
+    return ulid.new()
 
 
 def _get_or_create_session(session_id: str | None) -> RoomSession:
@@ -174,11 +178,32 @@ DEVICE_HEADER = "X-Dr-Alex-Device-Token"
 
 async def require_device(
     x_dr_alex_device_token: str | None = Header(default=None, alias=DEVICE_HEADER),
-) -> str:
+) -> pairing.DevicePrincipal:
     """FastAPI dependency: 401 unless a valid, non-revoked device token is presented."""
-    if not pairing.verify_device_token(x_dr_alex_device_token):
+    principal = pairing.resolve_device_token(x_dr_alex_device_token)
+    if principal is None:
         raise HTTPException(status_code=401, detail="device not paired")
-    return x_dr_alex_device_token  # type: ignore[return-value]
+    return principal
+
+
+def _require_active_owner(
+    session_id: str | None, principal: pairing.DevicePrincipal
+) -> statedb.SessionOwner:
+    """Return the matching active PWA owner without adopting or reopening an ID."""
+    if not isinstance(session_id, str) or not statedb.valid_session_id(session_id):
+        raise HTTPException(status_code=404, detail="session_not_found")
+    try:
+        owner = statedb.get_session_owner(session_id)
+    except sqlite3.Error as exc:
+        raise HTTPException(status_code=503, detail="policy_state_unavailable") from exc
+    if owner is None or (
+        owner.ended_at is not None
+        or owner.actor_principal != principal.actor_principal
+        or owner.subject_id != pairing.local_subject_id()
+        or owner.source != "pwa"
+    ):
+        raise HTTPException(status_code=404, detail="session_not_found")
+    return owner
 
 
 # ---------------------------------------------------------------------------
@@ -190,8 +215,23 @@ def _sse(event: dict) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
+def _refresh_transcript_policy(sess: RoomSession) -> statedb.EffectiveConsent | None:
+    """Resolve the enforced PWA policy; legacy surfaces and defaults stay unchanged."""
+    if not config.consent_enforcement_enabled():
+        sess.transcript_policy = "legacy"
+        return None
+    try:
+        consent = statedb.resolve_consent(pairing.local_subject_id(), "pwa")
+    except Exception as exc:  # noqa: BLE001 — policy failure must deny without breaking a turn
+        _log.warning("transcript policy resolution failed: %s", type(exc).__name__)
+        consent = statedb.EffectiveConsent()
+    sess.transcript_policy = "retain" if consent.transcript_retention else "deny"
+    return consent
+
+
 def _run_turn_blocking(sess: RoomSession, text: str) -> engine.TurnOutcome:
     """Run the SINGLE turn function on a worker thread (it may spawn the model subprocess)."""
+    _refresh_transcript_policy(sess)
     out = engine.run_turn(
         text,
         history=list(sess.history),
@@ -199,6 +239,7 @@ def _run_turn_blocking(sess: RoomSession, text: str) -> engine.TurnOutcome:
         session_id=sess.session_id,
         system_prompt_override=sess.system_prompt,
         memory_ids=sess.memory_ids,
+        transcript_policy=sess.transcript_policy,
     )
     # Maintain conversation history for GREEN/AMBER turns (RED is not a conversational turn).
     if out.tier is not Tier.RED:
@@ -330,7 +371,6 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
 
-
     # -- ungated: static shell + manifest + service worker ----------------
 
     @app.get("/", response_class=HTMLResponse)
@@ -382,12 +422,14 @@ def create_app() -> FastAPI:
         store. Absent-but-lazily-created is NOT a fault. Never raises; ``checks`` is additive.
         """
         checks = _health_checks()
-        return JSONResponse({
-            "ok": all(checks.values()),
-            "service": "alexd",
-            "loopback": True,
-            "checks": checks,
-        })
+        return JSONResponse(
+            {
+                "ok": all(checks.values()),
+                "service": "alexd",
+                "loopback": True,
+                "checks": checks,
+            }
+        )
 
     # /readyz and /livez are aliases of /healthz — something local polls those
     # names and logs 404 spam against them; same body, no new logic.
@@ -412,17 +454,49 @@ def create_app() -> FastAPI:
         try:
             dev = pairing.redeem_pairing_code(code, label=label or None)
         except pairing.PairingLockedOut as exc:
-            raise HTTPException(status_code=429, detail="too many attempts; try again later") from exc
+            raise HTTPException(
+                status_code=429, detail="too many attempts; try again later"
+            ) from exc
         if dev is None:
             raise HTTPException(status_code=401, detail="invalid or expired pairing code")
         return JSONResponse({"device_id": dev.id, "device_token": dev.token})
 
     # -- gated: session lifecycle -----------------------------------------
 
-    @app.post("/session/start", dependencies=[Depends(require_device)])
-    async def session_start(request: Request) -> JSONResponse:
+    @app.post("/session/start")
+    async def session_start(
+        request: Request,
+        principal: pairing.DevicePrincipal = Depends(require_device),
+    ) -> JSONResponse:
         payload = await _json(request)
-        sess = _get_or_create_session(payload.get("session_id"))
+        enforcement = config.consent_enforcement_enabled()
+        consent_supplied = "consent" in payload
+        if consent_supplied and not enforcement:
+            raise HTTPException(status_code=409, detail="consent_feature_disabled")
+        if consent_supplied and not config.allow_test_consent():
+            raise HTTPException(status_code=403, detail="consent_channel_not_approved")
+        subject_id = pairing.local_subject_id()
+        requested_session_id = payload.get("session_id")
+        if requested_session_id is not None and not statedb.valid_session_id(requested_session_id):
+            raise HTTPException(status_code=422, detail="invalid_session_id")
+        session_id = requested_session_id or _new_session_id()
+        try:
+            owner = statedb.create_session_owner_and_consent(
+                session_id,
+                subject_id=subject_id,
+                actor_principal=principal.actor_principal,
+                source="pwa",
+                consent=payload["consent"] if consent_supplied else None,
+            )
+        except statedb.ConsentValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.code) from exc
+        except sqlite3.Error as exc:
+            detail = "consent_store_unavailable" if consent_supplied else "policy_state_unavailable"
+            raise HTTPException(status_code=503, detail=detail) from exc
+        if owner is None:
+            raise HTTPException(status_code=404, detail="session_not_found")
+        sess = _get_or_create_session(session_id)
+        consent = _refresh_transcript_policy(sess)
         try:
             statedb.start_session(sess.session_id, is_test_traffic=sess.test_traffic)
         except Exception as exc:  # noqa: BLE001 — telemetry never blocks a session
@@ -440,16 +514,31 @@ def create_app() -> FastAPI:
         except Exception as exc:  # noqa: BLE001
             _log.warning("repair-ack fetch failed: %s", type(exc).__name__)
             ack = None
-        return JSONResponse({
+        response: dict[str, object] = {
             "session_id": sess.session_id,
             "greeting": engine.greeting(),
             "repair_ack": ack,
-        })
+        }
+        if enforcement:
+            consent = consent or statedb.EffectiveConsent()
+            response["consent_status"] = {
+                "transcript_retention": "granted" if consent.transcript_retention else "denied",
+                "durable_memory": "granted" if consent.durable_memory else "denied",
+                "cross_surface_recall": "granted" if consent.cross_surface_recall else "denied",
+            }
+            response["consent_active"] = any(
+                (consent.transcript_retention, consent.durable_memory, consent.cross_surface_recall)
+            )
+        return JSONResponse(response)
 
-    @app.post("/session/end", dependencies=[Depends(require_device)])
-    async def session_end(request: Request) -> JSONResponse:
+    @app.post("/session/end")
+    async def session_end(
+        request: Request,
+        principal: pairing.DevicePrincipal = Depends(require_device),
+    ) -> JSONResponse:
         payload = await _json(request)
         sid = payload.get("session_id")
+        owner = _require_active_owner(sid, principal)
         sess = _sessions.get(sid) if sid else None
         mood = _as_mood(payload.get("mood"))
         if sess is not None and mood is not None:
@@ -462,6 +551,7 @@ def create_app() -> FastAPI:
         # re-triages, so a crisis leftover still routes through the RED short-circuit (the
         # crisis bypass is preserved, not weakened).
         if sess is not None:
+            _refresh_transcript_policy(sess)
             buffered = sess.debounce.flush_now(sess.session_id)
             leftover = "\n".join(
                 p for p in (sess.take_pending(), buffered.text if buffered else "") if p
@@ -474,6 +564,17 @@ def create_app() -> FastAPI:
                     _log.warning("session-end leftover turn failed: %s", type(exc).__name__)
         if sid:
             try:
+                closed = statedb.close_session_owner(
+                    sid,
+                    subject_id=owner.subject_id,
+                    actor_principal=owner.actor_principal,
+                    source=owner.source,
+                )
+            except sqlite3.Error as exc:
+                raise HTTPException(status_code=503, detail="policy_state_unavailable") from exc
+            if not closed:
+                raise HTTPException(status_code=404, detail="session_not_found")
+            try:
                 statedb.end_session(sid)
             except Exception as exc:  # noqa: BLE001
                 _log.warning("end_session telemetry failed: %s", type(exc).__name__)
@@ -482,10 +583,15 @@ def create_app() -> FastAPI:
 
     # -- gated: the turn (SSE) --------------------------------------------
 
-    @app.post("/turn", dependencies=[Depends(require_device)])
-    async def turn(request: Request):
+    @app.post("/turn")
+    async def turn(
+        request: Request,
+        principal: pairing.DevicePrincipal = Depends(require_device),
+    ):
         payload = await _json(request)
-        sess = _get_or_create_session(payload.get("session_id"))
+        session_id = payload.get("session_id")
+        _require_active_owner(session_id, principal)
+        sess = _get_or_create_session(session_id)
         text = str(payload.get("text", "") or "")
         is_fragment = bool(payload.get("fragment", False))
 
@@ -493,8 +599,10 @@ def create_app() -> FastAPI:
         bypass, _reason = crisis_prescreen.should_bypass_debounce(text)
         if is_fragment and not bypass:
             sess.debounce.push(sess.session_id, text)
+
             async def _buffered():
                 yield _sse({"type": "buffered", "pending": sess.debounce.pending_count()})
+
             return StreamingResponse(_buffered(), media_type="text/event-stream")
 
         # Final fragment (or a lone message, or a crisis bypass): coalesce any buffered
@@ -502,13 +610,14 @@ def create_app() -> FastAPI:
         # Also fold in any earlier timer/cap-flushed fragments that had no live request
         # to stream them (D10 — never silently dropped).
         buffered = sess.debounce.flush_now(sess.session_id)
-        parts = [p for p in (sess.take_pending(),
-                             buffered.text if buffered else "", text) if p]
+        parts = [p for p in (sess.take_pending(), buffered.text if buffered else "", text) if p]
         coalesced = "\n".join(parts).strip()
 
         if not coalesced.strip():
+
             async def _empty():
                 yield _sse({"type": "done", "tier": "GREEN"})
+
             return StreamingResponse(_empty(), media_type="text/event-stream")
 
         async def _stream():
@@ -517,8 +626,11 @@ def create_app() -> FastAPI:
             safe_text, was_empty = wire.empty_output_guard(out.text)
             # G16 wire-decision audit — ONE structured, body-free line per turn.
             wire.audit_turn(
-                tier=out.tier, safety_path_taken=out.safety_action,
-                chunk_ids=out.chunk_ids, memory_ids=out.memory_ids, empty_guarded=was_empty,
+                tier=out.tier,
+                safety_path_taken=out.safety_action,
+                chunk_ids=out.chunk_ids,
+                memory_ids=out.memory_ids,
+                empty_guarded=was_empty,
             )
             yield _sse({"type": "meta", "tier": out.tier.value, "crisis": out.tier is Tier.RED})
             for piece in engine.chunk_text(safe_text):
@@ -529,10 +641,29 @@ def create_app() -> FastAPI:
 
     # -- gated: nightly check-in ------------------------------------------
 
-    @app.post("/checkin", dependencies=[Depends(require_device)])
-    async def checkin(request: Request) -> JSONResponse:
+    @app.post("/checkin")
+    async def checkin(
+        request: Request,
+        principal: pairing.DevicePrincipal = Depends(require_device),
+    ) -> JSONResponse:
         payload = await _json(request)
-        sess = _get_or_create_session(payload.get("session_id"))
+        session_id = payload.get("session_id")
+        if session_id:
+            _require_active_owner(session_id, principal)
+        else:
+            session_id = _new_session_id()
+            try:
+                owner = statedb.create_session_owner(
+                    session_id,
+                    subject_id=pairing.local_subject_id(),
+                    actor_principal=principal.actor_principal,
+                    source="pwa",
+                )
+            except sqlite3.Error as exc:
+                raise HTTPException(status_code=503, detail="policy_state_unavailable") from exc
+            if owner is None:
+                raise HTTPException(status_code=503, detail="policy_state_unavailable")
+        sess = _get_or_create_session(session_id)
         try:
             statedb.start_session(sess.session_id, is_test_traffic=sess.test_traffic)
         except Exception as exc:  # noqa: BLE001
@@ -541,10 +672,12 @@ def create_app() -> FastAPI:
         if mood is not None:
             _record_mood(sess, "open", mood)
         # A FIXED, non-interpolated opener (no therapy data on this path).
-        return JSONResponse({
-            "session_id": sess.session_id,
-            "opener": "Winding down? No agenda — how was today, honestly? Even a word or two is enough.",
-        })
+        return JSONResponse(
+            {
+                "session_id": sess.session_id,
+                "opener": "Winding down? No agenda — how was today, honestly? Even a word or two is enough.",
+            }
+        )
 
     # -- gated: homework --------------------------------------------------
 
@@ -555,11 +688,20 @@ def create_app() -> FastAPI:
         except Exception as exc:  # noqa: BLE001
             _log.warning("open_homework failed: %s", type(exc).__name__)
             items = []
-        return JSONResponse({"homework": [
-            {"id": h.id, "title": h.title, "assigned_date": h.assigned_date,
-             "due": h.due, "status": h.status}
-            for h in items
-        ]})
+        return JSONResponse(
+            {
+                "homework": [
+                    {
+                        "id": h.id,
+                        "title": h.title,
+                        "assigned_date": h.assigned_date,
+                        "due": h.due,
+                        "status": h.status,
+                    }
+                    for h in items
+                ]
+            }
+        )
 
     @app.post("/homework/{hw_id}/done", dependencies=[Depends(require_device)])
     async def homework_done(hw_id: str) -> JSONResponse:
@@ -601,15 +743,19 @@ def create_app() -> FastAPI:
 
         res = await run_in_threadpool(_run)
         if not res.ok:
-            return JSONResponse({"ok": False, "error": res.error or "export failed"}, status_code=400)
-        return JSONResponse({
-            "ok": True,
-            "redaction": res.redaction,
-            "range": {"from": res.from_date, "to": res.to_date},
-            "markdown_path": res.markdown_path,
-            "html_path": res.html_path,
-            "note": "Generated on the Mac. Open the HTML and print-to-PDF; nothing was sent.",
-        })
+            return JSONResponse(
+                {"ok": False, "error": res.error or "export failed"}, status_code=400
+            )
+        return JSONResponse(
+            {
+                "ok": True,
+                "redaction": res.redaction,
+                "range": {"from": res.from_date, "to": res.to_date},
+                "markdown_path": res.markdown_path,
+                "html_path": res.html_path,
+                "note": "Generated on the Mac. Open the HTML and print-to-PDF; nothing was sent.",
+            }
+        )
 
     # -- gated: WebAuthn registration stub (D3 rider 3) -------------------
 
@@ -621,8 +767,13 @@ def create_app() -> FastAPI:
         registration succeeds (D3 rider 3). Over ``tailscale serve`` (HTTPS) the browser's real
         WebAuthn ceremony replaces this stub.
         """
-        return JSONResponse({"ok": True, "stub": True,
-                             "note": "Passkey registration is real over the tailscale HTTPS origin."})
+        return JSONResponse(
+            {
+                "ok": True,
+                "stub": True,
+                "note": "Passkey registration is real over the tailscale HTTPS origin.",
+            }
+        )
 
     return app
 
@@ -727,7 +878,10 @@ def _configure_daemon_logging() -> None:
             pass
         target = d / "alexd.log"
         rotating = RotatingFileHandler(
-            target, maxBytes=_LOG_MAX_BYTES, backupCount=_LOG_BACKUPS, encoding="utf-8",
+            target,
+            maxBytes=_LOG_MAX_BYTES,
+            backupCount=_LOG_BACKUPS,
+            encoding="utf-8",
         )
         rotating.setFormatter(fmt)
         rotating._dralex_audit_sink = True  # type: ignore[attr-defined]

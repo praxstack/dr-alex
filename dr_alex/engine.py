@@ -241,10 +241,7 @@ def red_response_rich(user_text: str | None = None, *, style: str | None = None)
     """Rich-markup RED reply for the TUI (graded-aware, full by default)."""
     if _use_graded(user_text, style):
         return crisis_card.render_graded_rich()
-    return (
-        f"[b]{crisis_card.GROUNDING_LINE}[/b]\n\n"
-        + crisis_card.render_rich()
-    )
+    return f"[b]{crisis_card.GROUNDING_LINE}[/b]\n\n" + crisis_card.render_rich()
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +278,7 @@ def record_turn_telemetry(
     safety_action: str,
     now: datetime | None = None,
     built_prompt: str | None = None,
+    transcript_policy: str = "legacy",
 ) -> None:
     """Persist the G9 turn trace + encrypted transcript, and flag an empty-reply malfunction.
 
@@ -304,12 +302,25 @@ def record_turn_telemetry(
             register_action=outcome.register_action if outcome else "clean",
             now=now,
         )
-        test_traffic = telemetry.is_test_traffic()
-        statedb.record_transcript(session_id=session_id, role="user", body=user_text,
-                                  tier=tier.value, is_test_traffic=test_traffic, now=now)
-        if reply_text:
-            statedb.record_transcript(session_id=session_id, role="assistant", body=reply_text,
-                                      tier=tier.value, is_test_traffic=test_traffic, now=now)
+        if transcript_policy in ("legacy", "retain"):
+            test_traffic = telemetry.is_test_traffic()
+            statedb.record_transcript(
+                session_id=session_id,
+                role="user",
+                body=user_text,
+                tier=tier.value,
+                is_test_traffic=test_traffic,
+                now=now,
+            )
+            if reply_text:
+                statedb.record_transcript(
+                    session_id=session_id,
+                    role="assistant",
+                    body=reply_text,
+                    tier=tier.value,
+                    is_test_traffic=test_traffic,
+                    now=now,
+                )
         # G10: a visibly empty delivered reply is a malfunction — queue one ack for next start.
         if not reply_text or not reply_text.strip() or reply_text.strip() == "(no response)":
             telemetry.note_malfunction("empty_reply", session_id=session_id, now=now)
@@ -350,6 +361,7 @@ def run_turn(
     system_prompt_override: str | None = None,
     memory_ids: list[str] | None = None,
     generate_fn=None,
+    transcript_policy: str = "legacy",
 ) -> TurnOutcome:
     """THE single safety-first turn, shared by the TUI, the one-shot CLI, and ``alexd``.
 
@@ -381,9 +393,15 @@ def run_turn(
         # most safety-critical to keep; phone-side RED was previously never persisted).
         red_text = red_response_text(user_text)
         record_turn_telemetry(
-            session_id=session_id, tier=tier, user_text=user_text, reply_text=red_text,
-            outcome=None, safety_action="red-card", now=now,
+            session_id=session_id,
+            tier=tier,
+            user_text=user_text,
+            reply_text=red_text,
+            outcome=None,
+            safety_action="red-card",
+            now=now,
             built_prompt=system_prompt_override,
+            transcript_policy=transcript_policy,
         )
         return TurnOutcome(tier=tier, text=red_text, safety_action="red-card")
 
@@ -427,13 +445,19 @@ def run_turn(
                 result.text = crisis_questioning.strip_safety_probe(result.text)
             safety_action = "reask-blocked"
 
-    outcome = gates.apply(result.text, retrieved, regenerate=lambda c: _gen(corrective=c).text)  # STEP 4
+    outcome = gates.apply(
+        result.text, retrieved, regenerate=lambda c: _gen(corrective=c).text
+    )  # STEP 4
 
     # D3 defense-in-depth: the gate-corrective regeneration inside ``gates.apply``
     # (dependency/register lint replacing the reply) can itself surface a fresh safety probe.
     # If the probe was already capped this session, strip it here too so NO code path — not the
     # re-ask regen above, not the gate regen — can ship a second safety probe. Never a 2nd ask.
-    if session is not None and session.suppress_safety_probe and crisis_questioning.is_safety_probe(outcome.text):
+    if (
+        session is not None
+        and session.suppress_safety_probe
+        and crisis_questioning.is_safety_probe(outcome.text)
+    ):
         outcome.text = crisis_questioning.strip_safety_probe(outcome.text)
         safety_action = "reask-blocked"
 
@@ -445,8 +469,15 @@ def run_turn(
 
     trace_turn(tier, retrieved, outcome, safety_action)  # STEP 5
     record_turn_telemetry(
-        session_id=session_id, tier=tier, user_text=user_text, reply_text=outcome.text,
-        outcome=outcome, safety_action=safety_action, now=now, built_prompt=sp,
+        session_id=session_id,
+        tier=tier,
+        user_text=user_text,
+        reply_text=outcome.text,
+        outcome=outcome,
+        safety_action=safety_action,
+        now=now,
+        built_prompt=sp,
+        transcript_policy=transcript_policy,
     )
     return TurnOutcome(
         tier=tier,
@@ -474,8 +505,14 @@ def respond_oneshot(
     in :func:`run_turn` (one function, one model call site — Directive 1).
     """
     out = run_turn(
-        user_text, history=history, recent_risk=recent_risk, now=now, timeout=timeout,
-        retriever=retriever, session=session, session_id=session_id,
+        user_text,
+        history=history,
+        recent_risk=recent_risk,
+        now=now,
+        timeout=timeout,
+        retriever=retriever,
+        session=session,
+        session_id=session_id,
     )
     return out.tier, out.text
 

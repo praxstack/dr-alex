@@ -19,6 +19,7 @@ telemetry ``state.db``, so the ``DR_ALEX_TELEMETRY_OFF`` kill-switch can never d
 
 from __future__ import annotations
 
+import base64
 import datetime as _dt
 import hmac
 import logging
@@ -36,6 +37,7 @@ _log = logging.getLogger("dr_alex.pairing")
 
 _PAIRING_DB_ENV = "DR_ALEX_PAIRING_DB"
 PAIRING_KEY_ACCOUNT = "pairing-key"
+_LOCAL_SUBJECT_LABEL = b"dr-alex-local-subject-v1"
 
 #: Pairing-code lifetime — council D3: TTL ≤ 5 minutes.
 CODE_TTL_SECONDS = 300
@@ -128,7 +130,9 @@ def _connect(path: Path | None = None):
             pass
     try:
         conn.executescript(_SCHEMA)
-        conn.execute("INSERT OR IGNORE INTO pairing_guard (id, failures, locked_until) VALUES (1, 0, NULL)")
+        conn.execute(
+            "INSERT OR IGNORE INTO pairing_guard (id, failures, locked_until) VALUES (1, 0, NULL)"
+        )
         yield conn
         conn.commit()
     finally:
@@ -136,8 +140,19 @@ def _connect(path: Path | None = None):
 
 
 def _hmac(value: str) -> str:
-    key = crypto.load_or_create_secret(PAIRING_KEY_ACCOUNT, generator=lambda: secrets.token_bytes(32))
+    key = crypto.load_or_create_secret(
+        PAIRING_KEY_ACCOUNT, generator=lambda: secrets.token_bytes(32)
+    )
     return hmac.new(key, value.encode("utf-8"), sha256).hexdigest()
+
+
+def local_subject_id() -> str:
+    """Return the stable, server-owned subject for this local installation."""
+    key = crypto.load_or_create_secret(
+        PAIRING_KEY_ACCOUNT, generator=lambda: secrets.token_bytes(32)
+    )
+    digest = hmac.new(key, _LOCAL_SUBJECT_LABEL, sha256).digest()[:16]
+    return "sub_" + base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
 # ---------------------------------------------------------------------------
@@ -154,8 +169,9 @@ def _canonical_code(code: str) -> str:
     return "".join(ch for ch in code.upper() if ch in _CODE_ALPHABET)
 
 
-def create_pairing_code(*, ttl: int = CODE_TTL_SECONDS, now: _dt.datetime | None = None,
-                        path: Path | None = None) -> str:
+def create_pairing_code(
+    *, ttl: int = CODE_TTL_SECONDS, now: _dt.datetime | None = None, path: Path | None = None
+) -> str:
     """Mint a single-use pairing code (TTL ≤ 5min). Returns the plaintext (shown once, in TUI)."""
     ttl = max(1, min(int(ttl), CODE_TTL_SECONDS))
     n = _now(now)
@@ -180,8 +196,13 @@ class DeviceToken:
     token: str  # plaintext — returned exactly once, never persisted
 
 
-def redeem_pairing_code(code: str, *, label: str | None = None, now: _dt.datetime | None = None,
-                        path: Path | None = None) -> DeviceToken | None:
+def redeem_pairing_code(
+    code: str,
+    *,
+    label: str | None = None,
+    now: _dt.datetime | None = None,
+    path: Path | None = None,
+) -> DeviceToken | None:
     """Exchange a pairing code for a long-lived device token.
 
     Constant-time compares against every active, unexpired, unused code. On success the code
@@ -217,7 +238,9 @@ def redeem_pairing_code(code: str, *, label: str | None = None, now: _dt.datetim
             if matched_id is None:
                 failures += 1
                 locked = failures >= MAX_FAILURES
-                new_locked_until = _iso(n + _dt.timedelta(seconds=LOCKOUT_SECONDS)) if locked else None
+                new_locked_until = (
+                    _iso(n + _dt.timedelta(seconds=LOCKOUT_SECONDS)) if locked else None
+                )
                 conn.execute(
                     "UPDATE pairing_guard SET failures=?, locked_until=? WHERE id=1",
                     (0 if locked else failures, new_locked_until),
@@ -248,11 +271,18 @@ def redeem_pairing_code(code: str, *, label: str | None = None, now: _dt.datetim
 # ---------------------------------------------------------------------------
 
 
-def verify_device_token(token: str | None, *, now: _dt.datetime | None = None,
-                        path: Path | None = None) -> bool:
-    """True iff ``token`` matches a non-revoked device token (constant-time). Updates last-used."""
+@dataclass(frozen=True)
+class DevicePrincipal:
+    device_id: str
+    actor_principal: str
+
+
+def resolve_device_token(
+    token: str | None, *, now: _dt.datetime | None = None, path: Path | None = None
+) -> DevicePrincipal | None:
+    """Resolve a valid token to its non-revoked paired-device principal."""
     if not token:
-        return False
+        return None
     presented = _hmac(token)
     n = _now(now)
     try:
@@ -263,11 +293,20 @@ def verify_device_token(token: str | None, *, now: _dt.datetime | None = None,
                 if not revoked and hmac.compare_digest(presented, token_hmac):
                     hit_id = did
             if hit_id is not None:
-                conn.execute("UPDATE device_tokens SET last_used_ts=? WHERE id=?", (_iso(n), hit_id))
-                return True
+                conn.execute(
+                    "UPDATE device_tokens SET last_used_ts=? WHERE id=?", (_iso(n), hit_id)
+                )
+                return DevicePrincipal(hit_id, f"device:{hit_id}")
     except sqlite3.Error:
-        return False
-    return False
+        return None
+    return None
+
+
+def verify_device_token(
+    token: str | None, *, now: _dt.datetime | None = None, path: Path | None = None
+) -> bool:
+    """True iff ``token`` matches a non-revoked device token (constant-time). Updates last-used."""
+    return resolve_device_token(token, now=now, path=path) is not None
 
 
 @dataclass
@@ -287,14 +326,20 @@ def list_devices(*, path: Path | None = None) -> list[DeviceInfo]:
             ).fetchall()
     except sqlite3.Error:
         return []
-    return [DeviceInfo(id=r[0], label=r[1] or "", created_ts=r[2], last_used_ts=r[3], revoked=bool(r[4]))
-            for r in rows]
+    return [
+        DeviceInfo(
+            id=r[0], label=r[1] or "", created_ts=r[2], last_used_ts=r[3], revoked=bool(r[4])
+        )
+        for r in rows
+    ]
 
 
 def revoke_device(device_id: str, *, path: Path | None = None) -> bool:
     try:
         with _connect(path) as conn:
-            cur = conn.execute("UPDATE device_tokens SET revoked=1 WHERE id=? AND revoked=0", (device_id,))
+            cur = conn.execute(
+                "UPDATE device_tokens SET revoked=1 WHERE id=? AND revoked=0", (device_id,)
+            )
             return cur.rowcount > 0
     except sqlite3.Error:
         return False

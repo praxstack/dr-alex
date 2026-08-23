@@ -15,9 +15,8 @@ lives here so operators and the self-improve loop share one map). All boolean sw
 truthy as one of ``1/true/yes/on`` (case-insensitive); anything else is falsy.
 
 PRIVACY KILL-SWITCHES (set truthy to disable a subsystem; each fails safe to OFF/degraded):
-    DR_ALEX_TELEMETRY_OFF   Disable the entire ``state.db`` telemetry store. Every read/write
-                            degrades to a no-op/empty result — no mood chips, traces, or
-                            transcripts are persisted. (statedb.telemetry_enabled)
+    DR_ALEX_TELEMETRY_OFF   Disable telemetry and transcript data in ``state.db``. Policy state
+                            (consent and session ownership) remains available.
     DR_ALEX_MEMORY_OFF      Disable the durable memory store — degrade to Phase-2 behaviour
                             (no recall, no session-end remember/scrub). (memstore.memory_enabled)
     DR_ALEX_NOTION_OFF      Disable the Notion mirror. Note: Notion is OPT-IN — this var only
@@ -33,6 +32,9 @@ BEHAVIOUR / REGISTER:
                                 mirror detail dial. Also ``[notion] detail_level``.
     DR_ALEX_TEST_TRAFFIC        Truthy marks the session as synthetic/test traffic so its
                                 turns are tagged and excluded from real-signal rollups.
+    DR_ALEX_CONSENT_ENFORCEMENT Truthy enables default-deny consent resolution for alexd only.
+                                Default false; does not control session ownership.
+    DR_ALEX_ALLOW_TEST_CONSENT  Truthy permits synthetic ``api_test`` consent input. Default false.
 
 MODEL / BINARY:
     DR_ALEX_MODEL       Override the Claude model id used for turns + recorded as
@@ -141,6 +143,18 @@ def crisis_card_style() -> str:
 def notion_detail_level() -> str:
     """The effective Notion mirror detail: ``summary`` (default) | ``structured`` | ``full``."""
     return load_config().notion_detail_level
+
+
+def _env_bool(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def consent_enforcement_enabled() -> bool:
+    return _env_bool("DR_ALEX_CONSENT_ENFORCEMENT")
+
+
+def allow_test_consent() -> bool:
+    return _env_bool("DR_ALEX_ALLOW_TEST_CONSENT")
 
 
 # ---------------------------------------------------------------------------

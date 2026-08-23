@@ -21,6 +21,7 @@ from __future__ import annotations
 import datetime as _dt
 import logging
 import os
+import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -80,7 +81,7 @@ def _ist(now: _dt.datetime | None = None) -> _dt.datetime:
 
 #: Bump when ``_SCHEMA`` changes so an existing db re-applies it once (D17). PRAGMA
 #: user_version is stored in the db file, so the schema is applied once per file, not per op.
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -158,6 +159,48 @@ CREATE TABLE IF NOT EXISTS notion_pages (
     updated_ts  TEXT NOT NULL,
     PRIMARY KEY (session_id, db_kind)
 );
+CREATE TABLE IF NOT EXISTS consent_receipts (
+    receipt_id                TEXT PRIMARY KEY,
+    subject_id                TEXT NOT NULL,
+    actor_principal           TEXT NOT NULL,
+    source                    TEXT NOT NULL,
+    scope                     TEXT NOT NULL,
+    decision                  TEXT NOT NULL,
+    effective_at              TEXT NOT NULL,
+    expires_at                TEXT,
+    policy_version            TEXT NOT NULL,
+    copy_version              TEXT NOT NULL,
+    retention_policy_version  TEXT NOT NULL,
+    purpose_version           TEXT NOT NULL,
+    locale                    TEXT NOT NULL,
+    acquisition_channel       TEXT NOT NULL,
+    supersedes                TEXT
+);
+CREATE INDEX IF NOT EXISTS consent_receipts_resolution
+    ON consent_receipts (subject_id, source, scope, effective_at DESC, receipt_id DESC);
+CREATE TABLE IF NOT EXISTS session_owners (
+    session_id       TEXT PRIMARY KEY,
+    subject_id       TEXT NOT NULL,
+    actor_principal  TEXT NOT NULL,
+    source           TEXT NOT NULL,
+    created_at       TEXT NOT NULL,
+    ended_at         TEXT
+);
+CREATE TABLE IF NOT EXISTS finalization_operations (
+    operation_id      TEXT PRIMARY KEY,
+    session_id        TEXT NOT NULL UNIQUE,
+    subject_id        TEXT NOT NULL,
+    source            TEXT NOT NULL,
+    status            TEXT NOT NULL,
+    payload_enc       BLOB,
+    step_state        TEXT NOT NULL,
+    lease_owner       TEXT,
+    lease_generation  INTEGER NOT NULL,
+    lease_expires_at  TEXT,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    error_class       TEXT
+);
 """
 
 
@@ -186,8 +229,9 @@ def _connect(path: Path | None = None) -> Iterator[sqlite3.Connection]:
         # current version yet — gated by PRAGMA user_version (D17). Routine reads/writes then
         # skip the CREATE-TABLE script entirely instead of re-running it on every _connect.
         if conn.execute("PRAGMA user_version").fetchone()[0] < _SCHEMA_VERSION:
-            conn.executescript(_SCHEMA)
-            conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
+            conn.executescript(
+                f"BEGIN IMMEDIATE;\n{_SCHEMA}\nPRAGMA user_version = {_SCHEMA_VERSION};\nCOMMIT;"
+            )
         yield conn
         conn.commit()
     finally:
@@ -198,6 +242,13 @@ def init_db(path: Path | None = None) -> None:
     """Idempotently create the db + schema (perms enforced)."""
     with _connect(path):
         pass
+
+
+@contextmanager
+def _policy_connect(path: Path | None = None) -> Iterator[sqlite3.Connection]:
+    """Policy-state connection; deliberately independent of the telemetry kill switch."""
+    with _connect(path) as conn:
+        yield conn
 
 
 def healthy(path: Path | None = None) -> bool:
@@ -229,7 +280,424 @@ def _bool(v: object) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Sessions (drive streaks + the late-night dependency monitor)
+# Identity-bound policy state (not controlled by DR_ALEX_TELEMETRY_OFF)
+# ---------------------------------------------------------------------------
+
+
+SOURCES = frozenset({"desktop", "pwa", "cli"})
+CONSENT_SCOPES = frozenset(
+    {
+        "transcript_retention",
+        "durable_memory",
+        "cross_surface_recall",
+        "clinical_export",
+        "clinical_share",
+    }
+)
+CONSENT_DECISIONS = frozenset({"granted", "denied", "withdrawn"})
+_CONSENT_METADATA_KEYS = frozenset(
+    {
+        "policy_version",
+        "copy_version",
+        "retention_policy_version",
+        "purpose_version",
+        "locale",
+        "effective_at",
+        "expires_at",
+    }
+)
+_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_LOCALE_RE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$")
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_MAX_POLICY_VERSION_LENGTH = 32
+_MAX_CONSENT_IDENTIFIER_LENGTH = 128
+_MAX_LOCALE_LENGTH = 35
+_MAX_UTC_TIMESTAMP_LENGTH = 32
+
+
+class ConsentValidationError(ValueError):
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+def valid_session_id(value: object) -> bool:
+    return isinstance(value, str) and _SESSION_ID_RE.fullmatch(value) is not None
+
+
+@dataclass(frozen=True)
+class ValidatedConsent:
+    decisions: dict[str, str]
+    effective_at: str
+    expires_at: str | None
+    policy_version: str
+    copy_version: str
+    retention_policy_version: str
+    purpose_version: str
+    locale: str
+
+
+@dataclass(frozen=True)
+class EffectiveConsent:
+    transcript_retention: bool = False
+    durable_memory: bool = False
+    cross_surface_recall: bool = False
+    transcript_receipt_id: str | None = None
+    durable_receipt_id: str | None = None
+    cross_surface_receipt_id: str | None = None
+    policy_version: str = "3.0.0"
+
+
+@dataclass(frozen=True)
+class SessionOwner:
+    session_id: str
+    subject_id: str
+    actor_principal: str
+    source: str
+    created_at: str
+    ended_at: str | None = None
+
+
+def _parse_utc(value: object) -> _dt.datetime | None:
+    if (
+        not isinstance(value, str)
+        or len(value) > _MAX_UTC_TIMESTAMP_LENGTH
+        or not value.endswith("Z")
+    ):
+        return None
+    try:
+        return _dt.datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError:
+        return None
+
+
+def validate_consent_input(
+    consent: object,
+    *,
+    now: _dt.datetime | None = None,
+) -> ValidatedConsent:
+    if not isinstance(consent, dict):
+        raise ConsentValidationError("invalid_consent")
+    unknown = set(consent) - CONSENT_SCOPES - _CONSENT_METADATA_KEYS
+    if unknown:
+        raise ConsentValidationError("unknown_consent_key")
+    decisions = {key: value for key, value in consent.items() if key in CONSENT_SCOPES}
+    if any(
+        not isinstance(value, str) or value not in CONSENT_DECISIONS for value in decisions.values()
+    ):
+        raise ConsentValidationError("invalid_consent_decision")
+    if (
+        decisions.get("durable_memory") == "granted"
+        and decisions.get("transcript_retention") != "granted"
+    ):
+        raise ConsentValidationError("durable_requires_transcript_retention")
+
+    required = (
+        "policy_version",
+        "copy_version",
+        "retention_policy_version",
+        "purpose_version",
+        "locale",
+    )
+    if any(not isinstance(consent.get(key), str) or not consent[key] for key in required):
+        raise ConsentValidationError("invalid_consent_metadata")
+    policy_version = consent["policy_version"]
+    if len(policy_version) > _MAX_POLICY_VERSION_LENGTH or not _VERSION_RE.fullmatch(
+        policy_version
+    ):
+        raise ConsentValidationError("invalid_policy_version")
+    for key in ("copy_version", "retention_policy_version", "purpose_version"):
+        if len(consent[key]) > _MAX_CONSENT_IDENTIFIER_LENGTH or not _IDENTIFIER_RE.fullmatch(
+            consent[key]
+        ):
+            raise ConsentValidationError("invalid_consent_metadata")
+    if len(consent["locale"]) > _MAX_LOCALE_LENGTH or not _LOCALE_RE.fullmatch(consent["locale"]):
+        raise ConsentValidationError("invalid_locale")
+
+    effective_at = consent.get("effective_at", _now_iso(now))
+    effective = _parse_utc(effective_at)
+    if effective is None:
+        raise ConsentValidationError("invalid_effective_at")
+    expires_at = consent.get("expires_at")
+    expires = _parse_utc(expires_at) if expires_at is not None else None
+    if expires_at is not None and (expires is None or expires <= effective):
+        raise ConsentValidationError("invalid_expires_at")
+    return ValidatedConsent(
+        decisions=decisions,
+        effective_at=effective_at,
+        expires_at=expires_at,
+        policy_version=policy_version,
+        copy_version=consent["copy_version"],
+        retention_policy_version=consent["retention_policy_version"],
+        purpose_version=consent["purpose_version"],
+        locale=consent["locale"],
+    )
+
+
+def _record_validated_consent(
+    conn: sqlite3.Connection,
+    *,
+    subject_id: str,
+    actor_principal: str,
+    source: str,
+    validated: ValidatedConsent,
+) -> list[str]:
+    receipt_ids: list[str] = []
+    for scope, decision in validated.decisions.items():
+        prior = conn.execute(
+            "SELECT receipt_id FROM consent_receipts "
+            "WHERE subject_id=? AND source=? AND scope=? "
+            "ORDER BY effective_at DESC, receipt_id DESC LIMIT 1",
+            (subject_id, source, scope),
+        ).fetchone()
+        receipt_id = ulid.new()
+        conn.execute(
+            "INSERT INTO consent_receipts "
+            "(receipt_id, subject_id, actor_principal, source, scope, decision, effective_at, "
+            "expires_at, policy_version, copy_version, retention_policy_version, purpose_version, "
+            "locale, acquisition_channel, supersedes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                receipt_id,
+                subject_id,
+                actor_principal,
+                source,
+                scope,
+                decision,
+                validated.effective_at,
+                validated.expires_at,
+                validated.policy_version,
+                validated.copy_version,
+                validated.retention_policy_version,
+                validated.purpose_version,
+                validated.locale,
+                "api_test",
+                prior[0] if prior else None,
+            ),
+        )
+        receipt_ids.append(receipt_id)
+    return receipt_ids
+
+
+def record_consent(
+    *,
+    subject_id: str,
+    actor_principal: str,
+    source: str,
+    consent: object,
+    now: _dt.datetime | None = None,
+    path: Path | None = None,
+) -> list[str]:
+    """Validate and atomically store all supplied scope decisions."""
+    if source not in SOURCES:
+        raise ConsentValidationError("invalid_source")
+    validated = validate_consent_input(consent, now=now)
+    with _policy_connect(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        return _record_validated_consent(
+            conn,
+            subject_id=subject_id,
+            actor_principal=actor_principal,
+            source=source,
+            validated=validated,
+        )
+
+
+def resolve_consent(
+    subject_id: str,
+    source: str,
+    *,
+    now: _dt.datetime | None = None,
+    path: Path | None = None,
+) -> EffectiveConsent:
+    """Resolve current consent; every absent, expired, withdrawn, or malformed scope denies."""
+    current = timeutil.now_utc(now)
+    try:
+        with _policy_connect(path) as conn:
+            rows = conn.execute(
+                "SELECT receipt_id, scope, decision, effective_at, expires_at, policy_version "
+                "FROM consent_receipts WHERE subject_id=? AND source=?",
+                (subject_id, source),
+            ).fetchall()
+    except sqlite3.Error as exc:
+        _log.warning("consent resolution failed: %s", type(exc).__name__)
+        return EffectiveConsent()
+
+    candidates: dict[str, tuple[_dt.datetime, str, bool, str]] = {}
+    malformed_scopes: set[str] = set()
+    for receipt_id, scope, decision, effective_at, expires_at, policy_version in rows:
+        if scope not in CONSENT_SCOPES:
+            _log.warning("consent row rejected: unknown_scope")
+            continue
+        effective = _parse_utc(effective_at)
+        if effective is None:
+            _log.warning("consent row rejected: invalid_timestamp scope=%s", scope)
+            malformed_scopes.add(scope)
+            continue
+        expires = _parse_utc(expires_at) if expires_at is not None else None
+        malformed = (
+            (expires_at is not None and expires is None)
+            or (expires is not None and expires <= effective)
+            or decision not in CONSENT_DECISIONS
+            or not isinstance(policy_version, str)
+            or not _VERSION_RE.fullmatch(policy_version)
+        )
+        if malformed:
+            _log.warning("consent row rejected: malformed scope=%s", scope)
+            malformed_scopes.add(scope)
+            continue
+        if effective > current:
+            continue
+        granted = (expires is None or expires > current) and decision == "granted"
+        candidate = (effective, receipt_id, granted, policy_version)
+        previous = candidates.get(scope)
+        if previous is None or candidate[:2] > previous[:2]:
+            candidates[scope] = candidate
+
+    resolved: dict[str, tuple[bool, str | None, str]] = {}
+    for scope in CONSENT_SCOPES:
+        if scope in malformed_scopes:
+            resolved[scope] = (False, None, "3.0.0")
+            continue
+        candidate = candidates.get(scope)
+        if candidate is not None:
+            _, receipt_id, granted, policy_version = candidate
+            resolved[scope] = (granted, receipt_id, policy_version)
+
+    transcript = resolved.get("transcript_retention", (False, None, "3.0.0"))
+    durable = resolved.get("durable_memory", (False, None, transcript[2]))
+    cross_surface = resolved.get("cross_surface_recall", (False, None, transcript[2]))
+    transcript_granted = bool(transcript[0])
+    return EffectiveConsent(
+        transcript_retention=transcript_granted,
+        durable_memory=transcript_granted and bool(durable[0]),
+        cross_surface_recall=False,
+        transcript_receipt_id=transcript[1],
+        durable_receipt_id=durable[1],
+        cross_surface_receipt_id=cross_surface[1],
+        policy_version=transcript[2],
+    )
+
+
+def _create_session_owner(
+    conn: sqlite3.Connection,
+    session_id: str,
+    *,
+    subject_id: str,
+    actor_principal: str,
+    source: str,
+    now: _dt.datetime | None,
+) -> SessionOwner | None:
+    if not valid_session_id(session_id):
+        raise ValueError("invalid session id")
+    conn.execute(
+        "INSERT OR IGNORE INTO session_owners "
+        "(session_id, subject_id, actor_principal, source, created_at, ended_at) "
+        "VALUES (?,?,?,?,?,NULL)",
+        (session_id, subject_id, actor_principal, source, _now_iso(now)),
+    )
+    row = conn.execute(
+        "SELECT session_id, subject_id, actor_principal, source, created_at, ended_at "
+        "FROM session_owners WHERE session_id=?",
+        (session_id,),
+    ).fetchone()
+    if not row or row[1:4] != (subject_id, actor_principal, source) or row[5] is not None:
+        return None
+    return SessionOwner(*row)
+
+
+def create_session_owner_and_consent(
+    session_id: str,
+    *,
+    subject_id: str,
+    actor_principal: str,
+    source: str,
+    consent: object | None,
+    now: _dt.datetime | None = None,
+    path: Path | None = None,
+) -> SessionOwner | None:
+    """Atomically bind a session owner and optional validated consent receipts."""
+    if source not in SOURCES:
+        return None
+    validated = validate_consent_input(consent, now=now) if consent is not None else None
+    with _policy_connect(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        owner = _create_session_owner(
+            conn,
+            session_id,
+            subject_id=subject_id,
+            actor_principal=actor_principal,
+            source=source,
+            now=now,
+        )
+        if owner is None:
+            conn.rollback()
+            return None
+        if validated is not None:
+            _record_validated_consent(
+                conn,
+                subject_id=subject_id,
+                actor_principal=actor_principal,
+                source=source,
+                validated=validated,
+            )
+    return owner
+
+
+def create_session_owner(
+    session_id: str,
+    *,
+    subject_id: str,
+    actor_principal: str,
+    source: str,
+    now: _dt.datetime | None = None,
+    path: Path | None = None,
+) -> SessionOwner | None:
+    """Create one immutable owner binding, or return its matching active owner."""
+    if source not in SOURCES:
+        return None
+    with _policy_connect(path) as conn:
+        return _create_session_owner(
+            conn,
+            session_id,
+            subject_id=subject_id,
+            actor_principal=actor_principal,
+            source=source,
+            now=now,
+        )
+
+
+def get_session_owner(session_id: str, *, path: Path | None = None) -> SessionOwner | None:
+    with _policy_connect(path) as conn:
+        row = conn.execute(
+            "SELECT session_id, subject_id, actor_principal, source, created_at, ended_at "
+            "FROM session_owners WHERE session_id=?",
+            (session_id,),
+        ).fetchone()
+    return SessionOwner(*row) if row else None
+
+
+def close_session_owner(
+    session_id: str,
+    *,
+    subject_id: str,
+    actor_principal: str,
+    source: str,
+    now: _dt.datetime | None = None,
+    path: Path | None = None,
+) -> bool:
+    """Atomically close the matching active owner binding exactly once."""
+    with _policy_connect(path) as conn:
+        result = conn.execute(
+            "UPDATE session_owners SET ended_at=? WHERE session_id=? AND subject_id=? "
+            "AND actor_principal=? AND source=? AND ended_at IS NULL",
+            (_now_iso(now), session_id, subject_id, actor_principal, source),
+        )
+    return result.rowcount == 1
+
+
+# ---------------------------------------------------------------------------
+# Sessions / mood / risk telemetry (controlled by DR_ALEX_TELEMETRY_OFF)
 # ---------------------------------------------------------------------------
 
 
@@ -249,14 +717,22 @@ def start_session(
                 "INSERT OR IGNORE INTO sessions "
                 "(id, started_ts, ended_ts, started_date_ist, started_hour_ist, is_test_traffic) "
                 "VALUES (?,?,?,?,?,?)",
-                (session_id, _now_iso(now), None, ist.strftime("%Y-%m-%d"), ist.hour,
-                 _bool(is_test_traffic)),
+                (
+                    session_id,
+                    _now_iso(now),
+                    None,
+                    ist.strftime("%Y-%m-%d"),
+                    ist.hour,
+                    _bool(is_test_traffic),
+                ),
             )
     except sqlite3.Error as exc:
         _log.warning("start_session failed: %s", type(exc).__name__)
 
 
-def end_session(session_id: str, *, now: _dt.datetime | None = None, path: Path | None = None) -> None:
+def end_session(
+    session_id: str, *, now: _dt.datetime | None = None, path: Path | None = None
+) -> None:
     if not telemetry_enabled():
         return
     try:
@@ -336,7 +812,9 @@ def _mood_rows(days: int, now: _dt.datetime | None, path: Path | None) -> list[t
         return []
 
 
-def mood_stats(*, days: int = 30, now: _dt.datetime | None = None, path: Path | None = None) -> MoodStats:
+def mood_stats(
+    *, days: int = 30, now: _dt.datetime | None = None, path: Path | None = None
+) -> MoodStats:
     if not telemetry_enabled():
         return MoodStats(window_days=days)
     rows = _mood_rows(days, now, path)
@@ -353,7 +831,9 @@ def mood_stats(*, days: int = 30, now: _dt.datetime | None = None, path: Path | 
     )
 
 
-def daily_mood(*, days: int = 30, now: _dt.datetime | None = None, path: Path | None = None) -> list[float | None]:
+def daily_mood(
+    *, days: int = 30, now: _dt.datetime | None = None, path: Path | None = None
+) -> list[float | None]:
     """Latest mood per IST-day over the last ``days`` days (oldest→newest) for the sparkline.
 
     Days without a mood chip render as ``None`` (a gap, not a fabricated value).
@@ -398,7 +878,9 @@ def session_moods(session_id: str, *, path: Path | None = None) -> tuple[int | N
     return (open_mood, close_mood)
 
 
-def risk_tier_max(*, days: int = 30, now: _dt.datetime | None = None, path: Path | None = None) -> str | None:
+def risk_tier_max(
+    *, days: int = 30, now: _dt.datetime | None = None, path: Path | None = None
+) -> str | None:
     if not telemetry_enabled():
         return None
     cutoff = _now_iso((now or _dt.datetime.now(_dt.UTC)) - _dt.timedelta(days=days))
@@ -450,7 +932,15 @@ def add_homework(
             conn.execute(
                 "INSERT INTO homework (id, title_enc, assigned_date, due, source_session, status, created_ts) "
                 "VALUES (?,?,?,?,?,?,?)",
-                (rid, crypto.encrypt(title.strip()), assigned, due, source_session, "open", _now_iso(now)),
+                (
+                    rid,
+                    crypto.encrypt(title.strip()),
+                    assigned,
+                    due,
+                    source_session,
+                    "open",
+                    _now_iso(now),
+                ),
             )
     except sqlite3.Error as exc:
         _log.warning("add_homework failed: %s", type(exc).__name__)
@@ -465,10 +955,17 @@ def _rows_to_homework(rows) -> list[Homework]:
             title = crypto.decrypt(r[1]) or ""
         except crypto.CryptoError:
             title = "(unreadable — key mismatch)"
-        out.append(Homework(
-            id=r[0], title=title, assigned_date=r[2], due=r[3],
-            source_session=r[4], status=r[5], created_ts=r[6],
-        ))
+        out.append(
+            Homework(
+                id=r[0],
+                title=title,
+                assigned_date=r[2],
+                due=r[3],
+                source_session=r[4],
+                status=r[5],
+                created_ts=r[6],
+            )
+        )
     return out
 
 
@@ -545,8 +1042,18 @@ def record_turn_trace(
                 "INSERT INTO turn_traces (id, session_id, ts, tier, model_version, prompt_hash, "
                 "is_test_traffic, safety_action, dependency_action, register_action) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (rid, session_id, _now_iso(now), tier, model_version, prompt_hash,
-                 _bool(is_test_traffic), safety_action, dependency_action, register_action),
+                (
+                    rid,
+                    session_id,
+                    _now_iso(now),
+                    tier,
+                    model_version,
+                    prompt_hash,
+                    _bool(is_test_traffic),
+                    safety_action,
+                    dependency_action,
+                    register_action,
+                ),
             )
     except sqlite3.Error as exc:
         _log.warning("record_turn_trace failed: %s", type(exc).__name__)
@@ -579,7 +1086,15 @@ def record_transcript(
             conn.execute(
                 "INSERT INTO transcripts (id, session_id, ts, role, body_enc, tier, is_test_traffic) "
                 "VALUES (?,?,?,?,?,?,?)",
-                (rid, session_id, _now_iso(now), role, crypto.encrypt(body), tier, _bool(is_test_traffic)),
+                (
+                    rid,
+                    session_id,
+                    _now_iso(now),
+                    role,
+                    crypto.encrypt(body),
+                    tier,
+                    _bool(is_test_traffic),
+                ),
             )
     except sqlite3.Error as exc:
         _log.warning("record_transcript failed: %s", type(exc).__name__)
@@ -597,7 +1112,9 @@ class TranscriptTurn:
     is_test_traffic: bool
 
 
-def session_ids_with_transcripts(*, include_test: bool = False, path: Path | None = None) -> list[str]:
+def session_ids_with_transcripts(
+    *, include_test: bool = False, path: Path | None = None
+) -> list[str]:
     if not telemetry_enabled():
         return []
     q = "SELECT DISTINCT session_id FROM transcripts"
@@ -619,7 +1136,8 @@ def load_transcript(session_id: str, *, path: Path | None = None) -> list[Transc
         with _connect(path) as conn:
             rows = conn.execute(
                 "SELECT session_id, ts, role, body_enc, tier, is_test_traffic FROM transcripts "
-                "WHERE session_id=? ORDER BY ts", (session_id,)
+                "WHERE session_id=? ORDER BY ts",
+                (session_id,),
             ).fetchall()
     except sqlite3.Error:
         return []
@@ -629,9 +1147,16 @@ def load_transcript(session_id: str, *, path: Path | None = None) -> list[Transc
             body = crypto.decrypt(r[3]) or ""
         except crypto.CryptoError:
             continue
-        out.append(TranscriptTurn(
-            session_id=r[0], ts=r[1], role=r[2], body=body, tier=r[4], is_test_traffic=bool(r[5]),
-        ))
+        out.append(
+            TranscriptTurn(
+                session_id=r[0],
+                ts=r[1],
+                role=r[2],
+                body=body,
+                tier=r[4],
+                is_test_traffic=bool(r[5]),
+            )
+        )
     return out
 
 
@@ -690,14 +1215,17 @@ def pending_repair_ack(*, path: Path | None = None) -> RepairAck | None:
     return RepairAck(id=row[0], kind=row[1], ts=row[2]) if row else None
 
 
-def mark_repair_acked(ack_id: str, *, now: _dt.datetime | None = None, path: Path | None = None) -> None:
+def mark_repair_acked(
+    ack_id: str, *, now: _dt.datetime | None = None, path: Path | None = None
+) -> None:
     """Mark an ack fired AND retire any other outstanding acks (ack once, never a backlog)."""
     if not telemetry_enabled():
         return
     try:
         with _connect(path) as conn:
-            conn.execute("UPDATE repair_acks SET acked=1, acked_ts=? WHERE acked=0",
-                         (_now_iso(now),))
+            conn.execute(
+                "UPDATE repair_acks SET acked=1, acked_ts=? WHERE acked=0", (_now_iso(now),)
+            )
     except sqlite3.Error as exc:
         _log.warning("mark_repair_acked failed: %s", type(exc).__name__)
 
@@ -735,7 +1263,9 @@ def late_night_signal(
         return DependencySignal(window_days=window_days, threshold=threshold)
     count = sum(1 for (h,) in rows if h in NIGHT_HOURS_IST)
     return DependencySignal(
-        late_night_count=count, window_days=window_days, threshold=threshold,
+        late_night_count=count,
+        window_days=window_days,
+        threshold=threshold,
         flagged=count >= threshold,
     )
 
@@ -819,7 +1349,11 @@ def get_notion_page_id(session_id: str, db_kind: str, *, path: Path | None = Non
 
 
 def set_notion_page_id(
-    session_id: str, db_kind: str, page_id: str, *, now: _dt.datetime | None = None,
+    session_id: str,
+    db_kind: str,
+    page_id: str,
+    *,
+    now: _dt.datetime | None = None,
     path: Path | None = None,
 ) -> None:
     if not telemetry_enabled():
@@ -903,10 +1437,17 @@ def window_snapshot(
             ).fetchall()
             for sid, started, date_ist, hour_ist, is_test in sess_rows:
                 open_mood, close_mood = _session_moods_conn(conn, sid)
-                snap.sessions.append(WindowSession(
-                    id=sid, started_ts=started, date_ist=date_ist, hour_ist=hour_ist,
-                    is_test_traffic=bool(is_test), open_mood=open_mood, close_mood=close_mood,
-                ))
+                snap.sessions.append(
+                    WindowSession(
+                        id=sid,
+                        started_ts=started,
+                        date_ist=date_ist,
+                        hour_ist=hour_ist,
+                        is_test_traffic=bool(is_test),
+                        open_mood=open_mood,
+                        close_mood=close_mood,
+                    )
+                )
 
             hw_rows = conn.execute(
                 "SELECT id, title_enc, assigned_date, due, source_session, status, created_ts "
@@ -925,8 +1466,11 @@ def window_snapshot(
                 if is_test:
                     snap.turns_test_traffic += 1
                 snap.tier_counts[tier] = snap.tier_counts.get(tier, 0) + 1
-                if (safety not in (None, "none")) or (dep not in (None, "clean")) \
-                        or (reg not in (None, "clean")):
+                if (
+                    (safety not in (None, "none"))
+                    or (dep not in (None, "clean"))
+                    or (reg not in (None, "clean"))
+                ):
                     snap.turns_flagged += 1
 
             corpus: list[str] = []
@@ -966,7 +1510,9 @@ def window_snapshot(
 # ---------------------------------------------------------------------------
 
 
-def mood_events_between(from_ts: str, to_ts: str, *, path: Path | None = None) -> list[tuple[str, int]]:
+def mood_events_between(
+    from_ts: str, to_ts: str, *, path: Path | None = None
+) -> list[tuple[str, int]]:
     """(ts, mood) mood chips with ``from_ts <= ts <= to_ts`` (ISO8601 Z), oldest→newest."""
     if not telemetry_enabled():
         return []
@@ -980,7 +1526,9 @@ def mood_events_between(from_ts: str, to_ts: str, *, path: Path | None = None) -
         return []
 
 
-def turn_tiers_between(from_ts: str, to_ts: str, *, path: Path | None = None) -> list[tuple[str, str]]:
+def turn_tiers_between(
+    from_ts: str, to_ts: str, *, path: Path | None = None
+) -> list[tuple[str, str]]:
     """(ts, tier) per-turn traces in the window (for risk-event rollups in the export)."""
     if not telemetry_enabled():
         return []
@@ -994,7 +1542,9 @@ def turn_tiers_between(from_ts: str, to_ts: str, *, path: Path | None = None) ->
         return []
 
 
-def sessions_between(from_ts: str, to_ts: str, *, path: Path | None = None) -> list[tuple[str, int]]:
+def sessions_between(
+    from_ts: str, to_ts: str, *, path: Path | None = None
+) -> list[tuple[str, int]]:
     """(id, started_hour_ist) for sessions started within ``from_ts <= started_ts <= to_ts``.
 
     Unlike :func:`window_snapshot` (a trailing now-anchored window), this honours an explicit
