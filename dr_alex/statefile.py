@@ -1,18 +1,17 @@
-"""Tiny JSON session-state store under ``data/`` — the Phase-3 stand-in for Phase-4's
-``state.db``.
+"""Tiny JSON session-state store under ``data/``.
 
-Holds only the small facts memory needs BETWEEN sessions:
+Holds the small facts memory needs BETWEEN sessions:
   - ``last_session_at`` / ``last_topic``  → the G5 delta-banded re-orientation preamble;
   - ``continuity_generated_at``           → the G8 loud-staleness banner;
   - ``unfinalized``                       → the crash-safety marker for the session-end
                                             fan-out (present ⇒ a fan-out did not complete).
 
-Written 0600 and gitignored (Directive 3 — nothing clinical or derived is ever tracked).
-The file itself is metadata only (timestamps + a short topic label); the topic is a
-non-clinical thread name, never a transcript. Writes are atomic (temp + ``os.replace``) so a
-*process* crash can never leave a half-written state file; ``fsync`` is best-effort on top, so
-a *machine* crash (power cut / panic) can still lose the last write — ``load`` tolerates that
-by returning empty state rather than raising.
+The unfinalized marker's derived digest is Fernet-encrypted at rest; its operational fields and
+top-level timestamps/topic remain plaintext. The file is written 0600 and gitignored. Writes are
+atomic (temp + ``os.replace``) so a process crash cannot leave a half-written file; ``fsync`` is
+best-effort, so a machine crash can still lose the last write. ``load`` tolerates a missing or
+malformed outer file by returning empty state, while an encrypted marker that cannot be decoded
+fails loudly during recovery.
 """
 
 from __future__ import annotations
@@ -25,9 +24,21 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from dr_alex import paths
+from dr_alex import crypto, paths
 
 _STATE_RELPATH = ("data", "session_state.json")
+_ENCRYPTED_MARKER_FIELDS = frozenset(
+    {
+        "session_id",
+        "started_at",
+        "end_ts",
+        "inbox_filename",
+        "digest_enc",
+        "remembered",
+        "inbox_written",
+        "continuity_written",
+    }
+)
 
 #: Serializes every read-modify-write of the state file. The TUI runs
 #: ``fanout.recover_if_needed`` on a Textual ``@work(thread=True)`` worker while the main
@@ -72,8 +83,51 @@ class SessionState:
     def marker(self) -> UnfinalizedMarker | None:
         if not self.unfinalized:
             return None
+        raw = self.unfinalized
+        if "digest_enc" in raw:
+            if set(raw) != _ENCRYPTED_MARKER_FIELDS or not (
+                all(
+                    isinstance(raw[field], str)
+                    for field in (
+                        "session_id",
+                        "started_at",
+                        "end_ts",
+                        "inbox_filename",
+                        "digest_enc",
+                    )
+                )
+                and isinstance(raw["remembered"], list)
+                and all(
+                    isinstance(index, int) and not isinstance(index, bool)
+                    for index in raw["remembered"]
+                )
+                and isinstance(raw["inbox_written"], bool)
+                and isinstance(raw["continuity_written"], bool)
+            ):
+                raise crypto.CryptoError("invalid encrypted session marker")
+            try:
+                decrypted = crypto.decrypt(raw["digest_enc"].encode("ascii"))
+                if decrypted is None:
+                    raise crypto.CryptoError("invalid encrypted session marker")
+                digest = json.loads(decrypted)
+            except crypto.CryptoError:
+                raise
+            except (TypeError, UnicodeError, ValueError) as exc:
+                raise crypto.CryptoError("invalid encrypted session marker") from exc
+            if not isinstance(digest, dict):
+                raise crypto.CryptoError("invalid encrypted session marker")
+            return UnfinalizedMarker(
+                session_id=raw["session_id"],
+                started_at=raw["started_at"],
+                end_ts=raw["end_ts"],
+                inbox_filename=raw["inbox_filename"],
+                digest=digest,
+                remembered=list(raw["remembered"]),
+                inbox_written=raw["inbox_written"],
+                continuity_written=raw["continuity_written"],
+            )
         try:
-            return UnfinalizedMarker(**self.unfinalized)
+            return UnfinalizedMarker(**raw)
         except (TypeError, ValueError):
             return None
 
@@ -176,8 +230,19 @@ def update(mutate: Callable[[SessionState], None], path: Path | None = None) -> 
 def set_unfinalized(marker: UnfinalizedMarker, path: Path | None = None) -> None:
     """Persist the crash-recovery marker. Atomic against concurrent writers."""
     payload = asdict(marker)
+    digest = payload.pop("digest")
+    encrypted = crypto.encrypt(json.dumps(digest, sort_keys=True, separators=(",", ":")))
+    if encrypted is None:
+        raise crypto.CryptoError("could not encrypt session marker")
+    try:
+        payload["digest_enc"] = encrypted.decode("ascii")
+    except (AttributeError, UnicodeError) as exc:
+        raise crypto.CryptoError("could not encrypt session marker") from exc
 
     def _set(st: SessionState) -> None:
+        current = st.unfinalized
+        if current and current.get("session_id") != marker.session_id:
+            raise RuntimeError("cannot replace pending marker for another session")
         st.unfinalized = payload
 
     update(_set, path)

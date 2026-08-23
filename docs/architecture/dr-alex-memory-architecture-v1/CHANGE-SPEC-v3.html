@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc 3.10.2" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>CHANGE-SPEC-v3</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      white-space: pre-wrap;
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: 1.5em;}
+    div.column{flex: auto;}
+    @media screen {
+    div.columns{gap: min(4vw, 1.5em);}
+    div.column{overflow-x: auto;}
+    }
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+    /* CSS for syntax highlighting */
+    html { -webkit-text-size-adjust: 100%; }
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    .sourceCode { overflow: visible; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+        color: #aaaaaa;
+      }
+    pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+    div.sourceCode
+      {   }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span.al { color: #ff0000; font-weight: bold; } /* Alert */
+    code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
+    code span.at { color: #7d9029; } /* Attribute */
+    code span.bn { color: #40a070; } /* BaseN */
+    code span.bu { color: #008000; } /* BuiltIn */
+    code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
+    code span.ch { color: #4070a0; } /* Char */
+    code span.cn { color: #880000; } /* Constant */
+    code span.co { color: #60a0b0; font-style: italic; } /* Comment */
+    code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
+    code span.do { color: #ba2121; font-style: italic; } /* Documentation */
+    code span.dt { color: #902000; } /* DataType */
+    code span.dv { color: #40a070; } /* DecVal */
+    code span.er { color: #ff0000; font-weight: bold; } /* Error */
+    code span.ex { } /* Extension */
+    code span.fl { color: #40a070; } /* Float */
+    code span.fu { color: #06287e; } /* Function */
+    code span.im { color: #008000; font-weight: bold; } /* Import */
+    code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
+    code span.kw { color: #007020; font-weight: bold; } /* Keyword */
+    code span.op { color: #666666; } /* Operator */
+    code span.ot { color: #007020; } /* Other */
+    code span.pp { color: #bc7a00; } /* Preprocessor */
+    code span.sc { color: #4070a0; } /* SpecialChar */
+    code span.ss { color: #bb6688; } /* SpecialString */
+    code span.st { color: #4070a0; } /* String */
+    code span.va { color: #19177c; } /* Variable */
+    code span.vs { color: #4070a0; } /* VerbatimString */
+    code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
+  </style>
+</head>
+<body>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#dr.-alex-memory-safety-v3-change-specification"
+id="toc-dr.-alex-memory-safety-v3-change-specification">Dr. Alex memory
+safety v3 change specification</a>
+<ul>
+<li><a href="#scope" id="toc-scope">1. Scope</a></li>
+<li><a href="#protected-invariants" id="toc-protected-invariants">2.
+Protected invariants</a></li>
+<li><a href="#da-sec-001-encrypted-crash-marker-digest"
+id="toc-da-sec-001-encrypted-crash-marker-digest">3. DA-SEC-001:
+encrypted crash-marker digest</a>
+<ul>
+<li><a href="#root-cause" id="toc-root-cause">3.1 Root cause</a></li>
+<li><a href="#files" id="toc-files">3.2 Files</a></li>
+<li><a href="#persisted-representation"
+id="toc-persisted-representation">3.3 Persisted representation</a></li>
+<li><a href="#test" id="toc-test">3.4 Test</a></li>
+<li><a href="#rollback" id="toc-rollback">3.5 Rollback</a></li>
+</ul></li>
+<li><a href="#am-sec-001-authorize-the-legacy-sensitive-request"
+id="toc-am-sec-001-authorize-the-legacy-sensitive-request">4.
+AM-SEC-001: authorize the legacy sensitive request</a>
+<ul>
+<li><a href="#root-cause-1" id="toc-root-cause-1">4.1 Root
+cause</a></li>
+<li><a href="#governing-policy-change"
+id="toc-governing-policy-change">4.2 Governing policy change</a></li>
+<li><a href="#files-1" id="toc-files-1">4.3 Files</a></li>
+<li><a href="#recall-contract" id="toc-recall-contract">4.4 Recall
+contract</a></li>
+<li><a href="#mcp-full-body-contract"
+id="toc-mcp-full-body-contract">4.5 MCP full-body contract</a></li>
+<li><a href="#behavior-matrix" id="toc-behavior-matrix">4.6 Behavior
+matrix</a></li>
+<li><a href="#tests" id="toc-tests">4.7 Tests</a></li>
+<li><a href="#rollback-1" id="toc-rollback-1">4.8 Rollback</a></li>
+</ul></li>
+<li><a href="#pwa-policy-001-blocked-decision-ticket"
+id="toc-pwa-policy-001-blocked-decision-ticket">5. PWA-POLICY-001:
+blocked decision ticket</a></li>
+<li><a href="#a.-tui-policy-001-blocked-legacy-retention-decision"
+id="toc-a.-tui-policy-001-blocked-legacy-retention-decision">5A.
+TUI-POLICY-001: blocked legacy-retention decision</a></li>
+<li><a href="#verification" id="toc-verification">6. Verification</a>
+<ul>
+<li><a href="#dr.-alex" id="toc-dr.-alex">Dr. Alex</a></li>
+<li><a href="#agent-memory" id="toc-agent-memory">agent-memory</a></li>
+</ul></li>
+<li><a href="#baseline-relative-quality-evidence"
+id="toc-baseline-relative-quality-evidence">7. Baseline-relative quality
+evidence</a></li>
+<li><a href="#definition-of-done" id="toc-definition-of-done">8.
+Definition of done</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="dr.-alex-memory-safety-v3-change-specification">Dr. Alex memory
+safety v3 change specification</h1>
+<p><strong>Status:</strong> Review candidate; implementation
+blocked<br />
+<strong>Normative architecture:</strong>
+<code>ARCHITECTURE-v3.md</code><br />
+<strong>Candidate repositories:</strong> Dr. Alex and agent-memory<br />
+<strong>New dependencies:</strong> none</p>
+<h2 id="scope">1. Scope</h2>
+<p>Two independent security tickets are ready after specification
+approval:</p>
+<ul>
+<li><code>DA-SEC-001</code>: encrypt and safely migrate the existing TUI
+crash-marker digest;</li>
+<li><code>AM-SEC-001</code>: route the legacy high-sensitivity request
+through existing authorization.</li>
+</ul>
+<p>PWA lifecycle implementation is not ready and is specified only as a
+blocked decision ticket.</p>
+<h2 id="protected-invariants">2. Protected invariants</h2>
+<p>The implementation must not change:</p>
+<ul>
+<li>triage-first ordering, RED short-circuit, crisis content, or golden
+RED recall;</li>
+<li>the single <code>llm.complete</code> entry point or deterministic
+output gates;</li>
+<li>normal, non-conflicting TUI fan-out eligibility, digest content,
+sink order, or sink behavior;</li>
+<li>default PWA, one-shot, Hermes, Telegram, Notion, backup, or
+live-service behavior;</li>
+<li>agent-memory canonical Markdown/Git authority, single writer,
+provenance, supersession, quarantine, archive, index rebuildability, or
+default low/medium recall;</li>
+<li>live clinical data, credentials, configuration, services, or
+profiles.</li>
+</ul>
+<h2 id="da-sec-001-encrypted-crash-marker-digest">3. DA-SEC-001:
+encrypted crash-marker digest</h2>
+<h3 id="root-cause">3.1 Root cause</h3>
+<p><code>statefile.set_unfinalized</code> serializes
+<code>asdict(UnfinalizedMarker)</code>, including <code>digest</code>,
+directly into <code>data/session_state.json</code>. The digest may
+contain insights, open threads, homework, and durable learnings. The
+file is private by mode but its body is plaintext.</p>
+<h3 id="files">3.2 Files</h3>
+<ul>
+<li><code>dr_alex/statefile.py</code></li>
+<li><code>dr_alex/fanout.py</code></li>
+<li><code>tests/test_fanout.py</code></li>
+</ul>
+<p>No other Dr. Alex source or test file is required.</p>
+<h3 id="persisted-representation">3.3 Persisted representation</h3>
+<p>The in-memory dataclass does not change. On disk, an active marker
+has:</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;unfinalized&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;session_id&quot;</span><span class="fu">:</span> <span class="st">&quot;synthetic-id&quot;</span><span class="fu">,</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;started_at&quot;</span><span class="fu">:</span> <span class="st">&quot;2026-08-23T00:00:00Z&quot;</span><span class="fu">,</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;end_ts&quot;</span><span class="fu">:</span> <span class="st">&quot;2026-08-23T00:01:00Z&quot;</span><span class="fu">,</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;inbox_filename&quot;</span><span class="fu">:</span> <span class="st">&quot;deterministic.md&quot;</span><span class="fu">,</span></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;digest_enc&quot;</span><span class="fu">:</span> <span class="st">&quot;&lt;Fernet token&gt;&quot;</span><span class="fu">,</span></span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;remembered&quot;</span><span class="fu">:</span> <span class="ot">[]</span><span class="fu">,</span></span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;inbox_written&quot;</span><span class="fu">:</span> <span class="kw">false</span><span class="fu">,</span></span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;continuity_written&quot;</span><span class="fu">:</span> <span class="kw">false</span></span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>The operational marker fields surrounding <code>digest_enc</code>
+remain plaintext. Only the JSON object carried by <code>digest</code> is
+encrypted into the token; there is no encrypted outer marker
+envelope.</p>
+<p>Normative rules:</p>
+<ol type="1">
+<li><code>set_unfinalized</code> removes plaintext <code>digest</code>
+from the persisted payload.</li>
+<li>It serializes the digest using deterministic JSON
+(<code>sort_keys=True</code> and compact separators), encrypts those
+bytes with existing <code>dr_alex.crypto</code> and
+<code>STATE_KEY_ACCOUNT</code>, and stores the ASCII Fernet token as
+<code>digest_enc</code>.</li>
+<li>It performs encryption before the atomic state-file update.
+Encryption failure changes no marker and calls no sink.</li>
+<li><code>SessionState.marker()</code> validates the persisted outer
+marker object before construction. Its exact fields are the seven
+plaintext operational fields shown above plus the
+<code>digest_enc</code> string: <code>session_id</code>,
+<code>started_at</code>, <code>end_ts</code>, and
+<code>inbox_filename</code> are strings; <code>remembered</code> is a
+list of non-Boolean integers; and <code>inbox_written</code> and
+<code>continuity_written</code> are Booleans. It then decrypts
+<code>digest_enc</code> through existing <code>crypto.decrypt</code>,
+decodes UTF-8, parses JSON, and requires the decoded digest to be an
+object before constructing the unchanged runtime marker.</li>
+<li>If <code>digest_enc</code> exists, a wrong key, invalid UTF-8,
+malformed JSON, a non-object decoded digest, or missing, extra, or
+wrongly typed persisted outer fields raises
+<code>crypto.CryptoError</code>; it must not fall back to any plaintext
+<code>digest</code> field.</li>
+<li>A legacy marker with <code>digest</code> and no
+<code>digest_enc</code> remains readable.</li>
+<li><code>recover_if_needed</code> persists the decoded marker through
+<code>set_unfinalized</code> before calling <code>complete</code>. This
+migrates legacy plaintext before the first replayed sink or step
+receipt.</li>
+<li>Existing body-free TUI recovery logging already catches generic
+exceptions. No TUI edit or new catch is required. The serialized
+<code>unfinalized</code> object remains, so the existing raw-marker
+staleness signal remains active; library tests assert the fail-closed
+behavior.</li>
+<li>Top-level state metadata is unchanged and may remain plaintext.</li>
+<li>The inaccurate <code>statefile.py</code> module text that calls this
+file metadata-only/non-clinical is corrected; it must describe the
+encrypted derived digest and remaining plaintext metadata.</li>
+<li>The atomic <code>set_unfinalized</code> update refuses to replace a
+nonempty marker whose raw <code>session_id</code> differs from the new
+marker. Same-session progress updates remain allowed. A conflicting
+session reads the raw <code>session_id</code> and raises the exact
+built-in <code>RuntimeError</code> with a body-free message before
+<code>marker()</code>, decryption, file change, or sink invocation, so a
+corrupt or wrong-key pending marker cannot be erased by the next TUI
+finalization. Do not add an exception type or TUI catch.</li>
+</ol>
+<h3 id="test">3.4 Test</h3>
+<p><code>test_recovery_encrypts_legacy_marker_before_first_sink</code>
+uses a legacy marker containing a unique synthetic digest sentinel. The
+first injected sink asserts that the raw file:</p>
+<ul>
+<li>contains <code>digest_enc</code>;</li>
+<li>does not contain the sentinel or a plaintext <code>digest</code>
+member;</li>
+<li>still round-trips to the same runtime digest;</li>
+<li>completes normal replay once, with existing idempotency
+behavior;</li>
+<li>finally asserts <code>statefile.load(sp).marker() is None</code> on
+the injected temporary state path.</li>
+</ul>
+<p><code>test_encrypted_marker_corruption_fails_loudly</code> is
+parameterized over a valid token encrypted with a different synthetic
+key, valid ciphertext containing invalid UTF-8, malformed JSON, and a
+non-object JSON value, plus persisted encrypted-marker records with
+missing, extra, or wrongly typed plaintext outer fields. The decrypted
+payload fixtures contain only the digest value. The wrong-key case also
+supplies a valid legacy plaintext digest and proves ciphertext is
+authoritative: every case raises <code>crypto.CryptoError</code>,
+preserves the raw marker, calls no sink, and never falls back to
+plaintext.</p>
+<p><code>test_marker_encryption_failure_preserves_existing_marker</code>
+injects an encryption failure before <code>set_unfinalized</code>
+updates the file and proves the exact prior bytes remain and no sink
+runs.</p>
+<p><code>test_conflicting_session_cannot_replace_pending_marker</code>
+leaves a synthetic wrong-key marker for session A, installs a
+forbidden-decrypt spy, attempts finalization for session B with injected
+seams, and proves <code>exc_info.type is RuntimeError</code>, a
+body-free message, zero decrypt calls, byte-identical session-A state,
+and zero sink calls. The exact-type and no-decrypt assertions prevent
+<code>crypto.CryptoError</code> (a <code>RuntimeError</code> subclass)
+from satisfying the test vacuously. Do not add a new fixture
+framework.</p>
+<h3 id="rollback">3.5 Rollback</h3>
+<p>Revert the Dr. Alex commit only after proving no marker is pending. A
+valid ciphertext marker must be completed with v3 first. A wrong-key or
+corrupt marker prohibits rollback: preserve exact bytes, retain v3,
+restore the correct key if possible, and require separate human incident
+authority if it remains unrecoverable. Verification must prove no
+pending synthetic marker remains in the test worktree. The final
+temporary-path assertion in
+<code>test_recovery_encrypts_legacy_marker_before_first_sink</code> is
+the executable rollback proof. It does not inspect repository state or
+any live marker, and no live marker is read or migrated during this
+run.</p>
+<h2 id="am-sec-001-authorize-the-legacy-sensitive-request">4.
+AM-SEC-001: authorize the legacy sensitive request</h2>
+<h3 id="root-cause-1">4.1 Root cause</h3>
+<p><code>include_sensitive=true</code> widens
+<code>RecallPolicy.allowed_sensitivities</code> to high, while
+<code>recall.recall</code> authorizes only
+<code>sensitivity_ceiling</code>. MCP <code>get_memory</code> separately
+treats the same Boolean as permission. The request is model-controlled
+and the existing tests codify the bypass for a general client.</p>
+<h3 id="governing-policy-change">4.2 Governing policy change</h3>
+<p>The current user’s direct hardening instruction and the content-free
+v3 architecture require removal of the legacy bypass. The agent-memory
+OpenSpec change must update <code>derived-index</code> and
+<code>mcp-transport</code> before code is accepted. The old
+accepted-risk exception remains preserved in Git history; after
+approval, v3 is the new versioned policy. Restricted reports remain
+historical provenance rather than implementation authority.</p>
+<p>Archive acceptance is stricter than adding a second requirement
+beside stale text. In the same atomic commit, canonical
+<code>derived-index</code> must update the parent sensitivity paragraph
+so <code>include_sensitive=true</code> requests, but never grants,
+authorized high scope. Canonical <code>mcp-transport</code> must replace
+“explicit opt-in” permission wording with an authorized high-scope
+request and apply the launch-identity rule to the legacy flag. Neither
+canonical file may retain a sentence that makes the Boolean sufficient
+permission. The unrelated ranking clauses in the active
+<code>improve-recall-relevance</code> change are not approved or changed
+by v3.</p>
+<h3 id="files-1">4.3 Files</h3>
+<p>Production:</p>
+<ul>
+<li><code>tools/memctl/memctl/recall.py</code></li>
+<li><code>tools/memctl/memctl/mcp.py</code></li>
+</ul>
+<p>Tests and specification:</p>
+<ul>
+<li>existing affected tests under <code>tests/test_mcp.py</code>,
+<code>tests/test_recall.py</code>, <code>tests/test_index.py</code>, and
+<code>tests/test_index_trust.py</code>;</li>
+<li>one OpenSpec change, the resulting canonical
+<code>derived-index</code> and <code>mcp-transport</code> deltas, and a
+policy-only rebase of the overlapping active
+<code>improve-recall-relevance</code> derived-index delta.</li>
+</ul>
+<p>Do not change <code>fetch_document</code>, <code>fetch_slug</code>,
+canonical path resolution, filesystem layout, or client policy
+storage.</p>
+<h3 id="recall-contract">4.4 Recall contract</h3>
+<p>Before opening an index or resolving candidates:</p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>requested_ceiling <span class="op">=</span> <span class="st">&quot;high&quot;</span> <span class="cf">if</span> opts.include_sensitive <span class="cf">else</span> opts.sensitivity_ceiling</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>authorize_ceiling(requested_ceiling, agent<span class="op">=</span>agent, is_cli<span class="op">=</span>is_cli)</span></code></pre></div>
+<p>Keep existing type validation and the rule that callers cannot
+specify both legacy and new high-scope controls. In MCP, request-body
+<code>agent</code>, project, tag, root, and filter values remain filters
+only; only <code>self.client</code> supplies the launch identity. Direct
+Python/CLI callers retain the existing accepted same-user trust in the
+explicit <code>agent</code> label. This patch does not claim that either
+label is an OS principal.</p>
+<h3 id="mcp-full-body-contract">4.5 MCP full-body contract</h3>
+<p>In <code>_tool_get_memory</code>, before calling
+<code>fetch_document</code>:</p>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> include_sensitive:</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>    recall_mod.authorize_ceiling(</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>        <span class="st">&quot;high&quot;</span>, agent<span class="op">=</span><span class="va">self</span>.client <span class="kw">or</span> <span class="st">&quot;unknown&quot;</span>, is_cli<span class="op">=</span><span class="va">False</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>    )</span></code></pre></div>
+<p>Retain the existing single canonical resolution, sensitivity check,
+revision check, and bounded read. Preserve the wire field shape and
+body-free <code>isError=true</code> refusal shape. Update both MCP tool
+descriptions to say that <code>include_sensitive=true</code> requests
+high scope and still requires an authorized launch identity; the Boolean
+is not permission.</p>
+<h3 id="behavior-matrix">4.6 Behavior matrix</h3>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>Caller</th>
+<th>Request</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Human CLI</td>
+<td>legacy high or explicit high</td>
+<td>unchanged, authorized</td>
+</tr>
+<tr>
+<td><code>dr-alex</code> launch client</td>
+<td>legacy high or explicit high</td>
+<td>unchanged, authorized</td>
+</tr>
+<tr>
+<td>Non-allowlisted MCP launch client</td>
+<td>default low/medium</td>
+<td>unchanged</td>
+</tr>
+<tr>
+<td>Non-allowlisted MCP launch client</td>
+<td><code>include_sensitive=true</code></td>
+<td>loud ceiling refusal before read</td>
+</tr>
+<tr>
+<td>Non-allowlisted MCP launch client</td>
+<td>explicit high ceiling</td>
+<td>existing loud ceiling refusal</td>
+</tr>
+<tr>
+<td><code>hook</code> launch client</td>
+<td><code>include_sensitive=true</code></td>
+<td>loud ceiling refusal before read</td>
+</tr>
+<tr>
+<td>Missing MCP launch client</td>
+<td><code>include_sensitive=true</code></td>
+<td>loud ceiling refusal before read</td>
+</tr>
+<tr>
+<td>MCP request-body <code>agent=dr-alex</code></td>
+<td>legacy or explicit high</td>
+<td>denied unless launch client is authorized</td>
+</tr>
+<tr>
+<td>Direct caller label <code>agent=dr-alex</code></td>
+<td>legacy or explicit high</td>
+<td>unchanged, authorized under existing same-user trust</td>
+</tr>
+<tr>
+<td>Direct caller label <code>agent=codex</code>,
+<code>is_cli=False</code></td>
+<td><code>include_sensitive=true</code></td>
+<td>loud ceiling refusal before index read</td>
+</tr>
+</tbody>
+</table>
+<p>Raw local <code>fetch_document</code>, <code>fetch_slug</code>, and
+the human CLI slug path remain trusted APIs. This patch does not pretend
+a launch label is an OS security principal.</p>
+<h3 id="tests">4.7 Tests</h3>
+<p>Tests must prove:</p>
+<ol type="1">
+<li>general, <code>hook</code>, missing, and spoofed launch clients
+cannot use <code>include_sensitive</code> for recall;</li>
+<li>a direct <code>agent="codex", is_cli=False</code> request and
+unauthorized MCP requests refuse before
+<code>index.open_readonly</code>;</li>
+<li>general and missing launch clients cannot use it for MCP
+<code>get_memory</code>;</li>
+<li>refusal occurs before <code>fetch_document</code>;</li>
+<li>spoofed request fields do not grant high scope;</li>
+<li>authorized human CLI and <code>dr-alex</code> retain current
+behavior;</li>
+<li>low and medium behavior remains unchanged;</li>
+<li>direct tests that intentionally exercise high data declare
+<code>is_cli=True</code> or an authorized launch agent instead of
+relying on the removed exception;</li>
+<li>the stale-revision <code>get_memory</code> test runs its widened leg
+as authorized <code>dr-alex</code>, proves <code>fetch_document</code>
+was reached, and pins the existing <code>exit=10</code> plus
+<code>slug '&lt;slug&gt;' is not available from current canonical state</code>
+payload; it must not add a new <code>kind</code> field or pass vacuously
+at the pre-fetch gate;</li>
+<li>the full suite passes with synthetic stores only.</li>
+</ol>
+<p>Use existing helpers and fixtures. No new test framework or private
+content is permitted.</p>
+<h3 id="rollback-1">4.8 Rollback</h3>
+<p>Revert the single agent-memory commit containing code, tests,
+canonical spec updates, and the archived OpenSpec change. Rollback
+restores the legacy accepted risk; it does not alter memory files,
+indexes, services, or live data.</p>
+<h2 id="pwa-policy-001-blocked-decision-ticket">5. PWA-POLICY-001:
+blocked decision ticket</h2>
+<p>No PWA lifecycle code may start until a human-owned policy version
+defines every Stage 1 item in <code>ARCHITECTURE-v3.md</code>. The
+eventual implementation must first repair the browser lifecycle and
+prove abandoned-tab/restart handling; merely calling existing fan-out
+from <code>/session/end</code> is not acceptable.</p>
+<p>This ticket is not ready for an agent, must not be published with a
+ready label, and has no code acceptance claim in this run.</p>
+<h2 id="a.-tui-policy-001-blocked-legacy-retention-decision">5A.
+TUI-POLICY-001: blocked legacy-retention decision</h2>
+<p>Existing TUI fan-out is preserved as baseline behavior but is not
+certified as consent-compliant. A human must explicitly accept it under
+a versioned purpose/retention/deletion/sink policy, change it, or
+disable it. This is a blocked policy ticket, not implementation
+authority.</p>
+<h2 id="verification">6. Verification</h2>
+<h3 id="dr.-alex">Dr. Alex</h3>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="bu">set</span> <span class="at">-euo</span> pipefail</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run pytest <span class="at">-q</span> tests/test_fanout.py::test_recovery_encrypts_legacy_marker_before_first_sink</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run pytest <span class="at">-q</span> tests/test_fanout.py tests/test_statefile.py</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run ruff format <span class="at">--check</span> dr_alex/statefile.py dr_alex/fanout.py tests/test_fanout.py</span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run ruff check dr_alex/statefile.py dr_alex/fanout.py tests/test_fanout.py</span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run mypy dr_alex/statefile.py dr_alex/fanout.py</span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run pytest <span class="at">-q</span></span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run dr-alex <span class="at">--version</span></span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a><span class="va">DOC_DIR</span><span class="op">=</span>docs/architecture/dr-alex-memory-architecture-v1</span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> stem <span class="kw">in</span> RUN-CONTRACT-v3 ARCHITECTURE-v3 CHANGE-SPEC-v3<span class="kw">;</span> <span class="cf">do</span></span>
+<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a>  <span class="ex">pandoc</span> <span class="at">--standalone</span> <span class="at">--toc</span> <span class="st">&quot;</span><span class="va">$DOC_DIR</span><span class="st">/</span><span class="va">$stem</span><span class="st">.md&quot;</span> <span class="at">--output</span> <span class="st">&quot;</span><span class="va">$DOC_DIR</span><span class="st">/</span><span class="va">$stem</span><span class="st">.html&quot;</span></span>
+<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a><span class="cf">done</span></span>
+<span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> stem <span class="kw">in</span> RUN-CONTRACT-v3 ARCHITECTURE-v3 CHANGE-SPEC-v3<span class="kw">;</span> <span class="cf">do</span></span>
+<span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a>  <span class="fu">cmp</span> <span class="at">-s</span> <span class="st">&quot;</span><span class="va">$DOC_DIR</span><span class="st">/</span><span class="va">$stem</span><span class="st">.html&quot;</span> <span class="op">&lt;(</span><span class="ex">pandoc</span> <span class="at">--standalone</span> <span class="at">--toc</span> <span class="st">&quot;</span><span class="va">$DOC_DIR</span><span class="st">/</span><span class="va">$stem</span><span class="st">.md&quot;</span><span class="op">)</span></span>
+<span id="cb4-17"><a href="#cb4-17" aria-hidden="true" tabindex="-1"></a>  <span class="fu">diff</span> <span class="at">-u</span> <span class="op">&lt;(</span><span class="ex">pandoc</span> <span class="at">--to</span><span class="op">=</span>html <span class="st">&quot;</span><span class="va">$DOC_DIR</span><span class="st">/</span><span class="va">$stem</span><span class="st">.md&quot;</span><span class="op">)</span> <span class="dt">\</span></span>
+<span id="cb4-18"><a href="#cb4-18" aria-hidden="true" tabindex="-1"></a>    <span class="op">&lt;(</span><span class="fu">sed</span> <span class="at">-n</span> <span class="st">&#39;/&lt;\/nav&gt;/,/&lt;\/body&gt;/p&#39;</span> <span class="st">&quot;</span><span class="va">$DOC_DIR</span><span class="st">/</span><span class="va">$stem</span><span class="st">.html&quot;</span> <span class="kw">|</span> <span class="fu">sed</span> <span class="st">&#39;1d;$d&#39;</span><span class="op">)</span></span>
+<span id="cb4-19"><a href="#cb4-19" aria-hidden="true" tabindex="-1"></a>  <span class="cf">if</span> <span class="ex">rg</span> <span class="at">-n</span> <span class="st">&#39;(?i)(&lt;(link|script|img|source|video|audio|iframe|embed|input|track|use)[^&gt;]+(href|src|srcset|poster)=|&lt;object[^&gt;]+data=|&lt;[^&gt;]+style=[^&gt;]*url\()&#39;</span> <span class="dt">\</span></span>
+<span id="cb4-20"><a href="#cb4-20" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;</span><span class="va">$DOC_DIR</span><span class="st">/</span><span class="va">$stem</span><span class="st">.html&quot;</span><span class="kw">;</span> <span class="cf">then</span></span>
+<span id="cb4-21"><a href="#cb4-21" aria-hidden="true" tabindex="-1"></a>    <span class="bu">exit</span> 1</span>
+<span id="cb4-22"><a href="#cb4-22" aria-hidden="true" tabindex="-1"></a>  <span class="cf">else</span></span>
+<span id="cb4-23"><a href="#cb4-23" aria-hidden="true" tabindex="-1"></a>    <span class="va">asset_scan_status</span><span class="op">=</span><span class="va">$?</span></span>
+<span id="cb4-24"><a href="#cb4-24" aria-hidden="true" tabindex="-1"></a>    <span class="bu">[</span> <span class="st">&quot;</span><span class="va">$asset_scan_status</span><span class="st">&quot;</span> <span class="ot">-eq</span> 1 <span class="bu">]</span> <span class="kw">||</span> <span class="bu">exit</span> <span class="st">&quot;</span><span class="va">$asset_scan_status</span><span class="st">&quot;</span></span>
+<span id="cb4-25"><a href="#cb4-25" aria-hidden="true" tabindex="-1"></a>  <span class="cf">fi</span></span>
+<span id="cb4-26"><a href="#cb4-26" aria-hidden="true" tabindex="-1"></a>  <span class="fu">awk</span> <span class="st">&#39;/&lt;style&gt;/{in_style=1} in_style &amp;&amp; /url\(/{exit 1} /&lt;\/style&gt;/{in_style=0}&#39;</span> <span class="dt">\</span></span>
+<span id="cb4-27"><a href="#cb4-27" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;</span><span class="va">$DOC_DIR</span><span class="st">/</span><span class="va">$stem</span><span class="st">.html&quot;</span></span>
+<span id="cb4-28"><a href="#cb4-28" aria-hidden="true" tabindex="-1"></a><span class="cf">done</span></span></code></pre></div>
+<h3 id="agent-memory">agent-memory</h3>
+<div class="sourceCode" id="cb5"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="bu">set</span> <span class="at">-euo</span> pipefail</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a><span class="ex">openspec</span> validate harden-sensitive-request-authorization <span class="at">--strict</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a><span class="ex">openspec</span> validate improve-recall-relevance <span class="at">--strict</span></span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a><span class="va">UV_NO_SYNC</span><span class="op">=</span>1 <span class="va">PYTHONDONTWRITEBYTECODE</span><span class="op">=</span>1 <span class="dt">\</span></span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run <span class="at">--project</span> tools/memctl <span class="at">--frozen</span> pytest <span class="at">-p</span> no:cacheprovider <span class="at">-q</span> <span class="dt">\</span></span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>  tests/test_mcp.py tests/test_recall.py <span class="dt">\</span></span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>  tests/test_index.py::test_t6_rebuild_equivalence_idsets_and_dump <span class="dt">\</span></span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a>  tests/test_index_trust.py::test_current_revision_still_reauthorizes_canonical_sensitivity_policy</span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a><span class="va">UV_NO_SYNC</span><span class="op">=</span>1 <span class="va">PYTHONDONTWRITEBYTECODE</span><span class="op">=</span>1 <span class="dt">\</span></span>
+<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run <span class="at">--project</span> tools/memctl <span class="at">--frozen</span> pytest <span class="at">-p</span> no:cacheprovider <span class="at">-q</span></span>
+<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a><span class="va">UV_NO_SYNC</span><span class="op">=</span>1 <span class="va">PYTHONDONTWRITEBYTECODE</span><span class="op">=</span>1 <span class="dt">\</span></span>
+<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run <span class="at">--project</span> tools/memctl <span class="at">--frozen</span> python <span class="at">-m</span> compileall <span class="at">-q</span> tools/memctl/memctl</span>
+<span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a><span class="va">UV_NO_SYNC</span><span class="op">=</span>1 <span class="va">PYTHONDONTWRITEBYTECODE</span><span class="op">=</span>1 <span class="dt">\</span></span>
+<span id="cb5-19"><a href="#cb5-19" aria-hidden="true" tabindex="-1"></a><span class="ex">uv</span> run <span class="at">--project</span> tools/memctl <span class="at">--frozen</span> python tools/docs/render_planning.py check</span>
+<span id="cb5-20"><a href="#cb5-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-21"><a href="#cb5-21" aria-hidden="true" tabindex="-1"></a><span class="ex">openspec</span> validate <span class="at">--all</span> <span class="at">--strict</span></span></code></pre></div>
+<p>After adding only the exact manifest below to the index, run for both
+repositories:</p>
+<div class="sourceCode" id="cb6"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="bu">set</span> <span class="at">-euo</span> pipefail</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> diff <span class="at">--cached</span> <span class="at">--check</span></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> status <span class="at">--short</span></span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> diff <span class="at">--staged</span></span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a><span class="ex">gitleaks</span> git <span class="at">--staged</span> <span class="at">--redact</span> <span class="at">--no-banner</span></span></code></pre></div>
+<p>The exact Dr. Alex staged manifest is:</p>
+<pre class="text"><code>docs/adr/0001-memory-retention-gate.md
+docs/architecture/dr-alex-memory-architecture-v1/ARCHITECTURE-v3.html
+docs/architecture/dr-alex-memory-architecture-v1/ARCHITECTURE-v3.md
+docs/architecture/dr-alex-memory-architecture-v1/CHANGE-SPEC-v3.html
+docs/architecture/dr-alex-memory-architecture-v1/CHANGE-SPEC-v3.md
+docs/architecture/dr-alex-memory-architecture-v1/README.md
+docs/architecture/dr-alex-memory-architecture-v1/RESEARCH-EVIDENCE.md
+docs/architecture/dr-alex-memory-architecture-v1/RUN-CONTRACT-v3.html
+docs/architecture/dr-alex-memory-architecture-v1/RUN-CONTRACT-v3.md
+docs/architecture/dr-alex-memory-architecture-v1/TICKETS-v3.md
+docs/architecture/dr-alex-memory-architecture-v1/reviews/v3/AUTHORIZATION-AND-PROVENANCE.md
+docs/architecture/dr-alex-memory-architecture-v1/reviews/v3/CODE-REVIEW-v3.md
+docs/architecture/dr-alex-memory-architecture-v1/reviews/v3/REVIEW-LEDGER-v3.md
+docs/architecture/dr-alex-memory-architecture-v1/reviews/v3/SPEC-APPROVAL-v3.md
+dr_alex/fanout.py
+dr_alex/statefile.py
+tests/test_fanout.py</code></pre>
+<p>The exact agent-memory staged manifest is the following, with the six
+change files located only at the archive path after archive (the
+pre-archive path must then be absent):</p>
+<pre class="text"><code>openspec/changes/archive/2026-08-23-harden-sensitive-request-authorization/.openspec.yaml
+openspec/changes/archive/2026-08-23-harden-sensitive-request-authorization/design.md
+openspec/changes/archive/2026-08-23-harden-sensitive-request-authorization/proposal.md
+openspec/changes/archive/2026-08-23-harden-sensitive-request-authorization/specs/derived-index/spec.md
+openspec/changes/archive/2026-08-23-harden-sensitive-request-authorization/specs/mcp-transport/spec.md
+openspec/changes/archive/2026-08-23-harden-sensitive-request-authorization/tasks.md
+openspec/changes/improve-recall-relevance/specs/derived-index/spec.md
+openspec/specs/derived-index/spec.md
+openspec/specs/mcp-transport/spec.md
+tests/test_index.py
+tests/test_index_trust.py
+tests/test_mcp.py
+tests/test_recall.py
+tools/memctl/memctl/mcp.py
+tools/memctl/memctl/recall.py</code></pre>
+<p><code>git diff --cached --name-only</code> must equal the applicable
+sorted manifest exactly; missing and extra paths both fail. The Gitleaks
+threshold is zero verified staged leaks. Any <code>data/</code>,
+<code>memories/</code>, <code>private/</code>, <code>events/</code>,
+<code>inbox/</code>, unrelated <code>archive/</code>,
+<code>quarantine/</code>, <code>snapshots/</code>, credential,
+configuration, or service path is a hard failure. Independent diff
+review must find zero non-synthetic personal names, conversation
+excerpts, or clinical record bodies. No command reads the live memory
+corpus or a live clinical database. The documented Pandoc commands must
+regenerate the three v3 HTML files as standalone documents from the
+approved Markdown. The byte-for-byte repeat render, exact heading/body
+fragment comparison, and zero resource-bearing HTML element,
+inline-style URL, or style-block URL checks must pass before
+staging.</p>
+<p>Run the applicable executable manifest comparison from each
+repository after staging. Both commands read the approved specification
+from the clean Dr. Alex worktree and fail if the heading is absent, the
+extracted manifest is empty, or any staged path differs.</p>
+<p>Dr. Alex:</p>
+<div class="sourceCode" id="cb9"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="bu">set</span> <span class="at">-euo</span> pipefail</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="va">APPROVED_SPEC</span><span class="op">=</span>/Users/prax/Development/Hermes-Projects/dr-alex-memory-architecture-v1-clean/docs/architecture/dr-alex-memory-architecture-v1/CHANGE-SPEC-v3.md</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="va">expected_manifest</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$(</span><span class="fu">awk</span> <span class="at">-v</span> heading=<span class="st">&#39;The exact Dr. Alex staged manifest is:&#39;</span> <span class="st">&#39;</span></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="st">  $0 == heading { wanted=1; next }</span></span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a><span class="st">  wanted &amp;&amp; $0 == &quot;```text&quot; { block=1; next }</span></span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a><span class="st">  block &amp;&amp; $0 == &quot;```&quot; { exit }</span></span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a><span class="st">  block { print }</span></span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a><span class="st">  END { if (!block) exit 2 }</span></span>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a><span class="st">&#39;</span> <span class="st">&quot;</span><span class="va">$APPROVED_SPEC</span><span class="st">&quot;</span><span class="va">)</span><span class="st">&quot;</span></span>
+<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a><span class="bu">test</span> <span class="at">-n</span> <span class="st">&quot;</span><span class="va">$expected_manifest</span><span class="st">&quot;</span></span>
+<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a><span class="fu">diff</span> <span class="at">-u</span> <span class="dt">\</span></span>
+<span id="cb9-12"><a href="#cb9-12" aria-hidden="true" tabindex="-1"></a>  <span class="op">&lt;(</span><span class="bu">printf</span> <span class="st">&#39;%s\n&#39;</span> <span class="st">&quot;</span><span class="va">$expected_manifest</span><span class="st">&quot;</span> <span class="kw">|</span> <span class="va">LC_ALL</span><span class="op">=</span>C <span class="fu">sort</span><span class="op">)</span> <span class="dt">\</span></span>
+<span id="cb9-13"><a href="#cb9-13" aria-hidden="true" tabindex="-1"></a>  <span class="op">&lt;(</span><span class="fu">git</span> diff <span class="at">--cached</span> <span class="at">--name-only</span> <span class="kw">|</span> <span class="va">LC_ALL</span><span class="op">=</span>C <span class="fu">sort</span><span class="op">)</span></span></code></pre></div>
+<p>agent-memory:</p>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="bu">set</span> <span class="at">-euo</span> pipefail</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="va">APPROVED_SPEC</span><span class="op">=</span>/Users/prax/Development/Hermes-Projects/dr-alex-memory-architecture-v1-clean/docs/architecture/dr-alex-memory-architecture-v1/CHANGE-SPEC-v3.md</span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a><span class="va">expected_manifest</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$(</span><span class="fu">awk</span> <span class="at">-v</span> heading=<span class="st">&#39;The exact agent-memory staged manifest is the following, with the six change files located only&#39;</span> <span class="st">&#39;</span></span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="st">  $0 == heading { wanted=1; next }</span></span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a><span class="st">  wanted &amp;&amp; $0 == &quot;```text&quot; { block=1; next }</span></span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a><span class="st">  block &amp;&amp; $0 == &quot;```&quot; { exit }</span></span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a><span class="st">  block { print }</span></span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a><span class="st">  END { if (!block) exit 2 }</span></span>
+<span id="cb10-9"><a href="#cb10-9" aria-hidden="true" tabindex="-1"></a><span class="st">&#39;</span> <span class="st">&quot;</span><span class="va">$APPROVED_SPEC</span><span class="st">&quot;</span><span class="va">)</span><span class="st">&quot;</span></span>
+<span id="cb10-10"><a href="#cb10-10" aria-hidden="true" tabindex="-1"></a><span class="bu">test</span> <span class="at">-n</span> <span class="st">&quot;</span><span class="va">$expected_manifest</span><span class="st">&quot;</span></span>
+<span id="cb10-11"><a href="#cb10-11" aria-hidden="true" tabindex="-1"></a><span class="fu">diff</span> <span class="at">-u</span> <span class="dt">\</span></span>
+<span id="cb10-12"><a href="#cb10-12" aria-hidden="true" tabindex="-1"></a>  <span class="op">&lt;(</span><span class="bu">printf</span> <span class="st">&#39;%s\n&#39;</span> <span class="st">&quot;</span><span class="va">$expected_manifest</span><span class="st">&quot;</span> <span class="kw">|</span> <span class="va">LC_ALL</span><span class="op">=</span>C <span class="fu">sort</span><span class="op">)</span> <span class="dt">\</span></span>
+<span id="cb10-13"><a href="#cb10-13" aria-hidden="true" tabindex="-1"></a>  <span class="op">&lt;(</span><span class="fu">git</span> diff <span class="at">--cached</span> <span class="at">--name-only</span> <span class="kw">|</span> <span class="va">LC_ALL</span><span class="op">=</span>C <span class="fu">sort</span><span class="op">)</span></span></code></pre></div>
+<h2 id="baseline-relative-quality-evidence">7. Baseline-relative quality
+evidence</h2>
+<p>Dr. Alex’s canonical full test suite passes after restoring the
+worktree-only <code>data/</code> mode to <code>0700</code>;
+<code>ruff check</code> passes. Global <code>ruff format --check</code>
+and global mypy have pre-existing failures at the frozen baseline. v3
+does not reformat 37 unrelated files or repair 13 unrelated type errors.
+Dr. Alex changed files must pass scoped format, lint, and type checks,
+and its global results must not regress. agent-memory deliberately
+declares pytest as its sole dev dependency, so v3 uses its native strict
+OpenSpec, compile, and canonical pytest gates instead of inventing a
+ruff or mypy requirement.</p>
+<p>The prior agent-memory receipt records 1,601 passed, 3 skipped, and
+one warning. A fresh full run in the isolated implementation worktree is
+required before commit.</p>
+<h2 id="definition-of-done">8. Definition of done</h2>
+<p>The run is complete only when:</p>
+<ul>
+<li>all v3 normative documents and the OpenSpec delta receive every
+requested review and final PASS;</li>
+<li>each nontrivial branch is introduced test-first and fails for the
+expected reason;</li>
+<li>both focused and full suites pass;</li>
+<li>Dr. Alex changed-file lint, format, and type checks pass;</li>
+<li>agent-memory strict OpenSpec, compile, and canonical test gates
+pass;</li>
+<li>archived canonical <code>derived-index</code> and
+<code>mcp-transport</code> contain no legacy Boolean-as-permission
+sentence and match the frozen hardening policy;</li>
+<li>global baseline checks do not regress;</li>
+<li>code review has no unresolved blocker or major finding;</li>
+<li>one atomic local commit exists per repository and no push, merge,
+activation, or live data operation occurred;</li>
+<li>the post-commit user handoff reports both resulting commit IDs
+without staging a self-referential delivery receipt;</li>
+<li>the final report states that PWA lifecycle, physical isolation,
+deletion, and Hermes consolidation remain incomplete and
+human-gated.</li>
+</ul>
+</body>
+</html>

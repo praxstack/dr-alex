@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc 3.10.2" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>RUN-CONTRACT-v3</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      white-space: pre-wrap;
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: 1.5em;}
+    div.column{flex: auto;}
+    @media screen {
+    div.columns{gap: min(4vw, 1.5em);}
+    div.column{overflow-x: auto;}
+    }
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+</head>
+<body>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#dr.-alex-memory-safety-v3-run-contract"
+id="toc-dr.-alex-memory-safety-v3-run-contract">Dr. Alex memory safety
+v3 run contract</a>
+<ul>
+<li><a href="#objective-and-success-definition"
+id="toc-objective-and-success-definition">1. Objective and success
+definition</a></li>
+<li><a href="#immutable-baseline-and-provenance-inputs"
+id="toc-immutable-baseline-and-provenance-inputs">2. Immutable baseline
+and provenance inputs</a></li>
+<li><a href="#protected-paths-and-controls"
+id="toc-protected-paths-and-controls">3. Protected paths and
+controls</a></li>
+<li><a href="#mutable-paths" id="toc-mutable-paths">4. Mutable paths</a>
+<ul>
+<li><a href="#dr.-alex-isolated-worktree"
+id="toc-dr.-alex-isolated-worktree">Dr. Alex isolated worktree</a></li>
+<li><a href="#agent-memory-isolated-worktree"
+id="toc-agent-memory-isolated-worktree">agent-memory isolated
+worktree</a></li>
+</ul></li>
+<li><a href="#frozen-evaluator" id="toc-frozen-evaluator">5. Frozen
+evaluator</a></li>
+<li><a href="#budgets-and-stop-rule" id="toc-budgets-and-stop-rule">6.
+Budgets and stop rule</a></li>
+<li><a href="#rollback-and-activation-boundary"
+id="toc-rollback-and-activation-boundary">7. Rollback and activation
+boundary</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="dr.-alex-memory-safety-v3-run-contract">Dr. Alex memory safety
+v3 run contract</h1>
+<p><strong>Status:</strong> Frozen review candidate<br />
+<strong>Initial review freeze:</strong> 2026-08-23T14:59:27Z<br />
+<strong>Review-budget revision:</strong> v3.2, authorized by the active
+user completion goal at 2026-08-23T17:06:13Z; unavailable-model
+substitution authorized at 2026-08-23T17:38:38Z<br />
+<strong>Run class:</strong> bounded, two-repository security
+repair<br />
+<strong>Implementation:</strong> blocked until v3.2 exact-byte role-lens
+review PASS</p>
+<h2 id="objective-and-success-definition">1. Objective and success
+definition</h2>
+<p>Repair two verified existing exposures with the smallest working
+diffs:</p>
+<ol type="1">
+<li>encrypt and safely migrate the existing TUI crash-marker
+digest;</li>
+<li>remove <code>include_sensitive</code> as independent authority for
+high-sensitivity agent-memory recall and MCP full-body reads.</li>
+</ol>
+<p>Success is observable only when the named focused checks, both
+canonical full suites, changed-file quality checks, and independent code
+reviews pass with no protected regression. PWA lifecycle, consent
+infrastructure, physical isolation, deletion, and Hermes consolidation
+are not success criteria for this run.</p>
+<h2 id="immutable-baseline-and-provenance-inputs">2. Immutable baseline
+and provenance inputs</h2>
+<ul>
+<li>Dr. Alex:
+<code>e0dad8a3f6e0e7016f74c6c3d53850c9a7892e7d</code>.</li>
+<li>agent-memory:
+<code>a01bc4cb9697aaeff69671d82ea2dbca1f32cd38</code>.</li>
+<li>restricted therapist-stack audit provenance SHA-256:
+<code>d349628361212722c06901b365dfc81d135fb4279e9655f9b5947d2a4c6e9005</code>.</li>
+<li>restricted Dr. Alex memory-review provenance SHA-256:
+<code>1cc6e53eab0d1a7509f13d3aaf06db7c384d5d27fc382d3b47cf82a81372320c</code>.</li>
+<li>content-free research adversarial reverification verdict:
+<code>PASS</code>.</li>
+<li>identity-preservation policy:
+<code>/Users/prax/Developer/agent-stack/policies/identity-preservation.md</code>.</li>
+</ul>
+<p>The report hashes preserve historical provenance; report bodies are
+not governing or externally reviewable inputs. Reviewers receive only
+the content-free v3 artifacts. The current user’s end-to-end
+review/specify/implement instruction authorizes creation of this new
+content-free candidate;
+<code>reviews/v3/AUTHORIZATION-AND-PROVENANCE.md</code> records that
+scope without publishing private material. Review findings may refine
+this unapproved candidate and are recorded outside its eventual content
+hash. The ADR status and every governing status string are finalized
+before the last hash-bound conformance reviews. After those reviewers
+pass the exact bytes and before the first production edit, an approval
+receipt records hashes for the run contract, architecture, change spec,
+accepted ADR, and the four governing hardening OpenSpec files defined
+below. Those hashes, the safety corpus, existing full-suite expectations
+outside the deliberate authorization change, and acceptance thresholds
+then freeze for implementation.</p>
+<p>The four-file governing OpenSpec set is
+<code>harden-sensitive-request-authorization/{proposal.md,design.md,specs/derived-index/spec.md,specs/mcp-transport/spec.md}</code>.
+Archive relocation must preserve those content hashes. The approval
+receipt also records a whole-file integrity hash for
+<code>improve-recall-relevance/specs/derived-index/spec.md</code>, but
+v3 approves only its sensitivity paragraph and legacy-authorization
+scenarios; its unrelated ranking contract remains owned by that active
+change. <code>.openspec.yaml</code> and <code>tasks.md</code> are
+execution receipts outside the governing hash set; task checkboxes may
+change without changing policy.</p>
+<h2 id="protected-paths-and-controls">3. Protected paths and
+controls</h2>
+<p>This run cannot change:</p>
+<ul>
+<li>Dr. Alex triage, crisis content, model entry point, output gates,
+books, PWA/Room source, transcript schema, normal/non-conflicting
+fan-out sink behavior, config, service files, or live data;</li>
+<li>Hermes, therapist profiles, Telegram routing, Therapy Stack,
+backups, credentials, clinical records, memory roots, services, or
+schedulers;</li>
+<li>agent-memory canonical memory files, write path, index architecture,
+gardener, provenance, supersession, quarantine, archive, or default
+low/medium behavior;</li>
+<li>unrelated dirty files in the original repositories.</li>
+</ul>
+<p>No test or document may expose private conversation or clinical
+content.</p>
+<p>Before implementation, create a fresh Dr. Alex worktree at frozen
+baseline <code>e0dad8a3f6e0e7016f74c6c3d53850c9a7892e7d</code>, transfer
+only the governed v3 document manifest into it, and prove that every
+resulting path is allowed by Section 4. The contaminated review worktree
+and its unrelated edits remain protected and are never staged, reverted,
+or copied into the implementation worktree.</p>
+<h2 id="mutable-paths">4. Mutable paths</h2>
+<h3 id="dr.-alex-isolated-worktree">Dr. Alex isolated worktree</h3>
+<ul>
+<li><code>docs/adr/0001-memory-retention-gate.md</code>;</li>
+<li><code>docs/architecture/dr-alex-memory-architecture-v1/README.md</code>;</li>
+<li><code>docs/architecture/dr-alex-memory-architecture-v1/RUN-CONTRACT-v3.md</code>
+and <code>.html</code>;</li>
+<li><code>docs/architecture/dr-alex-memory-architecture-v1/ARCHITECTURE-v3.md</code>
+and <code>.html</code>;</li>
+<li><code>docs/architecture/dr-alex-memory-architecture-v1/CHANGE-SPEC-v3.md</code>
+and <code>.html</code>;</li>
+<li><code>docs/architecture/dr-alex-memory-architecture-v1/TICKETS-v3.md</code>;</li>
+<li><code>docs/architecture/dr-alex-memory-architecture-v1/RESEARCH-EVIDENCE.md</code>;</li>
+<li><code>docs/architecture/dr-alex-memory-architecture-v1/reviews/v3/AUTHORIZATION-AND-PROVENANCE.md</code>;</li>
+<li><code>docs/architecture/dr-alex-memory-architecture-v1/reviews/v3/REVIEW-LEDGER-v3.md</code>;</li>
+<li><code>docs/architecture/dr-alex-memory-architecture-v1/reviews/v3/SPEC-APPROVAL-v3.md</code>;</li>
+<li><code>docs/architecture/dr-alex-memory-architecture-v1/reviews/v3/CODE-REVIEW-v3.md</code>;</li>
+<li><code>dr_alex/statefile.py</code>;</li>
+<li><code>dr_alex/fanout.py</code>;</li>
+<li><code>tests/test_fanout.py</code>.</li>
+</ul>
+<h3 id="agent-memory-isolated-worktree">agent-memory isolated
+worktree</h3>
+<ul>
+<li>the six files under
+<code>openspec/changes/harden-sensitive-request-authorization/</code>
+named in its current tree, or the same six files at
+<code>openspec/changes/archive/2026-08-23-harden-sensitive-request-authorization/</code>
+after archive;</li>
+<li><code>openspec/specs/derived-index/spec.md</code> and
+<code>openspec/specs/mcp-transport/spec.md</code> as the
+archive-generated canonical updates;</li>
+<li><code>openspec/changes/improve-recall-relevance/specs/derived-index/spec.md</code>,
+only for the sensitivity-policy paragraph and scenarios that keep the
+active delta policy-rebased;</li>
+<li><code>tools/memctl/memctl/recall.py</code>;</li>
+<li><code>tools/memctl/memctl/mcp.py</code>;</li>
+<li><code>tests/test_mcp.py</code>;</li>
+<li><code>tests/test_recall.py</code>;</li>
+<li><code>tests/test_index.py</code>;</li>
+<li><code>tests/test_index_trust.py</code>.</li>
+</ul>
+<p>Any additional production file requires a new scope review before
+editing.</p>
+<h2 id="frozen-evaluator">5. Frozen evaluator</h2>
+<p>The evaluator consists of:</p>
+<ul>
+<li>the test cases and behavior matrix named in
+<code>CHANGE-SPEC-v3.md</code> before candidate code;</li>
+<li>the existing Dr. Alex full suite and safety invariants;</li>
+<li>the existing agent-memory full hermetic suite;</li>
+<li>Dr. Alex changed-file ruff format/lint and source-file mypy
+checks;</li>
+<li>agent-memory’s repository-native strict OpenSpec, compile, and
+hermetic pytest gates (that repository deliberately has no ruff or mypy
+dependency);</li>
+<li>baseline-relative global format and mypy results for Dr. Alex;</li>
+<li>diff/body/secret scans and independent specification and code
+reviews.</li>
+</ul>
+<p>The deliberate agent-memory expectation change is authorized by the
+current user’s direct instruction and, after approval, this new
+versioned OpenSpec policy before code. The restricted reports remain
+historical provenance and do not govern the candidate. No other expected
+result may change to make a candidate pass. Every implementation
+candidate is compared with the original baseline above and the current
+accepted version; until the first acceptance, those are the same
+commit.</p>
+<h2 id="budgets-and-stop-rule">6. Budgets and stop rule</h2>
+<ul>
+<li>Maximum implementation commits: <code>2</code>, one per
+repository.</li>
+<li>Maximum review/fix rounds per repository: <code>3</code>.</li>
+<li>Maximum net application-and-test diff: <code>400</code> changed
+lines per repository.</li>
+<li>New runtime dependencies, tables, flags, services, keys, or sinks:
+<code>0</code>.</li>
+<li>Elapsed-time ceiling: <code>8 hours</code> from the initial review
+freeze, ending <code>2026-08-23T22:59:27Z</code>.</li>
+<li>Model-compute ceiling: <code>1,500,000</code> reported or estimated
+tokens across fresh external review and implementation-agent runs. The
+user-authorized v3.2 amendment permits exactly one fifth exact-byte
+invocation each for Codex and Grok and one fourth MoA invocation. Every
+other CLI that exposes no token count remains capped at three
+invocations per named reviewer.</li>
+<li>A named model’s unavailability, payment failure, or tool failure
+cannot block this run. The active user goal requires the affected review
+to be replaced by a Codex Luna XHigh review of the same exact bytes and
+role lens. This substitution changes neither the evaluator nor the
+scope, cost, token, round, or quality thresholds.</li>
+<li>Incremental metered-cost ceiling: <code>US$25</code>;
+subscription-included calls count as zero incremental spend only when
+the tool reports no separate charge.</li>
+<li>Stop after two consecutive candidates show no target improvement, at
+any budget limit, or on any protected regression. Report the stall; do
+not weaken a gate or expand scope.</li>
+</ul>
+<p>Documentation and generated HTML are receipts, not product progress
+and do not increase the code budget.</p>
+<h2 id="rollback-and-activation-boundary">7. Rollback and activation
+boundary</h2>
+<ul>
+<li>Dr. Alex rollback pointer: baseline commit above plus the v3 feature
+commit’s parent.</li>
+<li>agent-memory rollback pointer: baseline commit above plus the v3
+feature commit’s parent.</li>
+<li>Revert only inside isolated worktrees; never run destructive
+rollback in original dirty checkouts.</li>
+<li>A valid pending encrypted Dr. Alex marker must be completed with v3
+before reverting to pre-v3 code. A wrong-key or corrupt marker blocks
+rollback: preserve its exact bytes, keep v3 in place, restore the
+correct key if possible, and require a separately authorized human
+incident decision if recovery remains impossible. Never clear or rewrite
+it merely to permit rollback.</li>
+</ul>
+<p>The run authorizes local feature branches, private GitHub
+implementation tickets after spec approval, and local commits after
+final review. It does not authorize push, merge, pull request,
+deployment, restart, activation, live configuration, clinical-data
+access, migration, deletion, or backup operation.</p>
+<p>The post-commit final user handoff, outside either repository and
+therefore outside the commit hashes it attests to, must report both
+baselines, both accepted commit IDs, protected-path diffs, measured
+gains or regressions, budget consumed, rejected candidates, unresolved
+blocked policy tickets, and exact non-destructive rollback commands. No
+self-referential final-delivery file is staged.</p>
+</body>
+</html>

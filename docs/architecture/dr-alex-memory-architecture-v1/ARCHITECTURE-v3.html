@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc 3.10.2" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>ARCHITECTURE-v3</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      white-space: pre-wrap;
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: 1.5em;}
+    div.column{flex: auto;}
+    @media screen {
+    div.columns{gap: min(4vw, 1.5em);}
+    div.column{overflow-x: auto;}
+    }
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+</head>
+<body>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#dr.-alex-memory-safety-architecture-v3"
+id="toc-dr.-alex-memory-safety-architecture-v3">Dr. Alex memory safety
+architecture v3</a>
+<ul>
+<li><a href="#decision" id="toc-decision">1. Decision</a></li>
+<li><a href="#restricted-provenance-and-frozen-repository-baseline"
+id="toc-restricted-provenance-and-frozen-repository-baseline">2.
+Restricted provenance and frozen repository baseline</a></li>
+<li><a href="#verified-current-architecture"
+id="toc-verified-current-architecture">3. Verified current
+architecture</a></li>
+<li><a href="#architecture-boundary" id="toc-architecture-boundary">4.
+Architecture boundary</a></li>
+<li><a href="#decision-a-protect-the-existing-tui-marker"
+id="toc-decision-a-protect-the-existing-tui-marker">5. Decision A:
+protect the existing TUI marker</a></li>
+<li><a href="#decision-b-one-authorization-rule-for-high-sensitivity"
+id="toc-decision-b-one-authorization-rule-for-high-sensitivity">6.
+Decision B: one authorization rule for high sensitivity</a></li>
+<li><a href="#threat-model" id="toc-threat-model">7. Threat model</a>
+<ul>
+<li><a href="#protected-assets" id="toc-protected-assets">Protected
+assets</a></li>
+<li><a href="#in-scope-attackers-and-failures"
+id="toc-in-scope-attackers-and-failures">In-scope attackers and
+failures</a></li>
+<li><a href="#out-of-scope-and-stated-honestly"
+id="toc-out-of-scope-and-stated-honestly">Out of scope and stated
+honestly</a></li>
+</ul></li>
+<li><a href="#staged-program" id="toc-staged-program">8. Staged
+program</a>
+<ul>
+<li><a href="#stage-0-this-run" id="toc-stage-0-this-run">Stage 0: this
+run</a></li>
+<li><a href="#stage-1-human-policy-gates"
+id="toc-stage-1-human-policy-gates">Stage 1: human policy gates</a></li>
+<li><a href="#stage-2-and-later" id="toc-stage-2-and-later">Stage 2 and
+later</a></li>
+</ul></li>
+<li><a href="#rejected-alternatives" id="toc-rejected-alternatives">9.
+Rejected alternatives</a></li>
+<li><a href="#acceptance-and-kill-criteria"
+id="toc-acceptance-and-kill-criteria">10. Acceptance and kill
+criteria</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="dr.-alex-memory-safety-architecture-v3">Dr. Alex memory safety
+architecture v3</h1>
+<p><strong>Status:</strong> Review candidate; implementation
+blocked<br />
+<strong>As of:</strong> 2026-08-23<br />
+<strong>Activation:</strong> Prohibited<br />
+<strong>Supersedes for implementation:</strong> v2 rc3 candidate only;
+restricted historical reports remain immutable</p>
+<h2 id="decision">1. Decision</h2>
+<p>This run will repair two verified security defects and will not build
+the proposed PWA retention infrastructure:</p>
+<ol type="1">
+<li>Encrypt the existing TUI crash-recovery digest before it is
+persisted or replayed.</li>
+<li>Make the legacy <code>include_sensitive</code> request use the
+existing high-sensitivity authorization rule in agent-memory recall and
+MCP full-body reads.</li>
+</ol>
+<p>PWA durable fan-out remains blocked. Receiving or authenticating a
+message is not consent to retain or promote it. No reviewed consent
+copy, retention duration, withdrawal/deletion contract, sink policy, or
+reliable browser close protocol exists yet.</p>
+<p>Existing TUI durable fan-out is also not declared consent-compliant
+by this review. v3 preserves that legacy baseline to avoid silently
+disabling current product behavior, but preservation is containment, not
+acceptance. <code>TUI-POLICY-001</code> records the required human
+disposition; no live activation or migration is allowed while it remains
+unresolved.</p>
+<p>This is the first rung that holds: it removes existing exposure
+without adding a database, service, dependency, runtime, feature flag,
+sink, or dormant framework.</p>
+<h2 id="restricted-provenance-and-frozen-repository-baseline">2.
+Restricted provenance and frozen repository baseline</h2>
+<p>Provenance and baselines:</p>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>Input</th>
+<th>SHA-256 or verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>therapist-stack-audit-2026-08-22.html</code></td>
+<td><code>d349628361212722c06901b365dfc81d135fb4279e9655f9b5947d2a4c6e9005</code></td>
+</tr>
+<tr>
+<td><code>dr-alex-memory-architecture-review-2026-08-23.html</code></td>
+<td><code>1cc6e53eab0d1a7509f13d3aaf06db7c384d5d27fc382d3b47cf82a81372320c</code></td>
+</tr>
+<tr>
+<td>Research adversarial reverification</td>
+<td><code>PASS</code></td>
+</tr>
+<tr>
+<td>Dr. Alex baseline</td>
+<td><code>e0dad8a3f6e0e7016f74c6c3d53850c9a7892e7d</code></td>
+</tr>
+<tr>
+<td>agent-memory baseline</td>
+<td><code>a01bc4cb9697aaeff69671d82ea2dbca1f32cd38</code></td>
+</tr>
+</tbody>
+</table>
+<p>The locally derived, content-free requirements retain conditional
+consolidation, purpose-specific durable-retention consent,
+confidentiality and erasure parity, and an isolated clinical memory
+boundary before migration. They also require removal of the legacy
+high-sensitivity request bypass. This candidate changes implementation
+only; it does not revise those gates or their evaluators.</p>
+<h2 id="verified-current-architecture">3. Verified current
+architecture</h2>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>Area</th>
+<th>Verified behavior</th>
+<th>Consequence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Turn pipeline</td>
+<td>TUI, one-shot, and PWA use <code>engine.run_turn</code>; RED triage
+short-circuits before retrieval and model</td>
+<td>Safety path stays protected and out of scope</td>
+</tr>
+<tr>
+<td>Transcript telemetry</td>
+<td>Turn bodies are encrypted in <code>state.db</code>; current callers
+persist under legacy behavior</td>
+<td>Existing behavior is not relabeled as consent-governed</td>
+</tr>
+<tr>
+<td>TUI finalization</td>
+<td>TUI calls <code>fanout.finalize_session</code></td>
+<td>Existing derived sinks remain unchanged</td>
+</tr>
+<tr>
+<td>TUI recovery marker</td>
+<td><code>session_state.json</code> stores
+<code>UnfinalizedMarker.digest</code> as plaintext JSON</td>
+<td>Existing at-rest privacy defect</td>
+</tr>
+<tr>
+<td>PWA finalization</td>
+<td><code>/session/end</code> drains fragments, ends telemetry, and
+drops the in-memory session; it does not call fan-out</td>
+<td>Lifecycle gap remains</td>
+</tr>
+<tr>
+<td>Browser close path</td>
+<td>The only normal <code>/session/end</code> call is tied to close-mood
+state; current JavaScript never enters that state</td>
+<td>Hooking the endpoint would not make finalization unavoidable</td>
+</tr>
+<tr>
+<td>PWA concurrency</td>
+<td>Existing fan-out has one global recovery marker; PWA sessions may
+overlap</td>
+<td>Existing fan-out cannot be reused safely without a broader
+design</td>
+</tr>
+<tr>
+<td>agent-memory recall</td>
+<td><code>sensitivity_ceiling=high</code> is launch-identity gated;
+legacy <code>include_sensitive=true</code> bypasses that gate</td>
+<td>General MCP and non-allowlisted direct callers off the CLI trust
+path can request high snippets</td>
+</tr>
+<tr>
+<td>agent-memory full body</td>
+<td>MCP <code>get_memory</code> treats
+<code>include_sensitive=true</code> as permission</td>
+<td>General MCP clients can request a high-sensitivity body</td>
+</tr>
+<tr>
+<td>Local filesystem</td>
+<td>Current same-account files are not an OS isolation boundary</td>
+<td>This run cannot claim physical clinical isolation</td>
+</tr>
+</tbody>
+</table>
+<p>No private conversation or clinical record was read to establish
+these facts.</p>
+<h2 id="architecture-boundary">4. Architecture boundary</h2>
+<pre class="text"><code>current turn
+  -&gt; deterministic triage
+  -&gt; RED: static crisis response, no retrieval/model
+  -&gt; GREEN/AMBER: existing retrieval, model, output gates
+  -&gt; existing encrypted telemetry behavior
+
+existing TUI close
+  -&gt; distill once
+  -&gt; encrypted crash marker digest   [v3 repair]
+  -&gt; unchanged existing fan-out sinks
+
+agent-memory request
+  -&gt; normalize requested sensitivity
+  -&gt; widened request: existing high-sensitivity authorization   [v3 repair]
+  -&gt; widened retrieval or widened canonical body fetch only when authorized
+
+PWA durable close
+  -&gt; BLOCKED pending human-owned retention and lifecycle policy</code></pre>
+<p>Raw transcripts, derived memory, indexes, and prompt context remain
+separate record classes. No rendered summary becomes transcript
+authority.</p>
+<h2 id="decision-a-protect-the-existing-tui-marker">5. Decision A:
+protect the existing TUI marker</h2>
+<p>The crash marker contains a structured session digest with derived
+clinical text. File mode <code>0600</code> and disk encryption are
+defense in depth, not application-layer encryption. The marker must use
+the already-installed Dr. Alex Fernet helper and state key.</p>
+<p>The runtime <code>UnfinalizedMarker.digest</code> remains a
+dictionary. Only its persisted representation changes to
+<code>digest_enc</code>. A legacy plaintext marker remains readable so
+an interrupted session can recover. Recovery rewrites it to ciphertext
+before any sink executes.</p>
+<p>A valid ciphertext marker must be recovered before rollback.
+Wrong-key or corrupt ciphertext is a stop condition, not a reason to
+discard the marker: preserve the bytes, retain v3, restore the correct
+key if possible, and escalate a separate human incident decision if it
+remains unrecoverable.</p>
+<p>This decision adds no retained content and changes no normal,
+non-conflicting TUI sink, consent, or safety behavior. The deliberate
+fail-closed change is that a new session cannot replace a different
+still-pending marker or invoke a sink. Top-level <code>last_topic</code>
+remains plaintext; v3 does not claim whole-file encryption.</p>
+<h2 id="decision-b-one-authorization-rule-for-high-sensitivity">6.
+Decision B: one authorization rule for high sensitivity</h2>
+<p><code>include_sensitive</code> remains a compatibility spelling for
+requesting high scope. It no longer grants that scope. Both it and
+<code>sensitivity_ceiling=high</code> use the existing
+<code>authorize_ceiling("high", agent=..., is_cli=...)</code> rule
+before retrieval or MCP body fetch.</p>
+<p>The existing CLI trust path (<code>is_cli=True</code>, intended for
+the human command entry point) and accepted <code>dr-alex</code>
+identity-label behavior remain. V3 does not add a human/non-human
+distinction inside that trusted CLI path. Low and medium access remains.
+A non-allowlisted or missing MCP launch identity receives the existing
+loud ceiling refusal. Outside MCP, the explicit <code>agent</code>
+argument remains a trusted same-user caller label; v3 does not turn that
+label into authenticated process identity.</p>
+<p>The repair covers widened <code>include_sensitive=true</code> body
+requests. The existing default <code>get_memory</code> path may still
+resolve and read one canonical document in-process before its current
+sensitivity refusal; changing that separate behavior is an explicit
+non-goal.</p>
+<p>This is a policy hardening inside memctl. It is not authenticated
+process identity and not filesystem isolation. Same-account processes
+can still read current files outside MCP; that requires a later
+human-approved OS/service boundary.</p>
+<h2 id="threat-model">7. Threat model</h2>
+<h3 id="protected-assets">Protected assets</h3>
+<ul>
+<li>derived TUI session digests at rest;</li>
+<li>high-sensitivity recall snippets and canonical bodies exposed
+through MCP request tools;</li>
+<li>existing crisis and response-safety behavior;</li>
+<li>canonical memory and provenance history.</li>
+</ul>
+<h3 id="in-scope-attackers-and-failures">In-scope attackers and
+failures</h3>
+<ul>
+<li>a local reader that obtains <code>session_state.json</code> without
+the Keychain key;</li>
+<li>a model-controlled MCP request setting
+<code>include_sensitive=true</code>;</li>
+<li>a non-allowlisted direct caller off the trusted CLI path using the
+legacy flag;</li>
+<li>wrong-key or corrupt marker ciphertext;</li>
+<li>a crash while migrating and replaying a legacy marker.</li>
+<li>a later TUI session attempting to replace a still-pending marker it
+cannot recover.</li>
+</ul>
+<h3 id="out-of-scope-and-stated-honestly">Out of scope and stated
+honestly</h3>
+<ul>
+<li>a process running as the same macOS user reading plaintext memory
+files directly;</li>
+<li>Keychain compromise or an unlocked hostile host;</li>
+<li>clinical root/key/process isolation;</li>
+<li>retention consent, deletion, backup expiry, or restore-time
+erasure;</li>
+<li>Hermes or Telegram migration;</li>
+<li>therapeutic or clinical efficacy.</li>
+</ul>
+<h2 id="staged-program">8. Staged program</h2>
+<h3 id="stage-0-this-run">Stage 0: this run</h3>
+<ul>
+<li>marker-digest encryption and safe legacy replay migration;</li>
+<li>request-flag authorization hardening;</li>
+<li>specs, OpenSpec delta, tickets, tests, reviews, and local
+commits;</li>
+<li>no live activation or data operation.</li>
+</ul>
+<h3 id="stage-1-human-policy-gates">Stage 1: human policy gates</h3>
+<p>Before PWA lifecycle implementation, a human-owned version must
+approve:</p>
+<ul>
+<li>exact consent copy, acquisition surface, subject, purpose, and
+proof;</li>
+<li>retention duration and default;</li>
+<li>withdrawal and deletion propagation across every sink, WAL, backup,
+and restore;</li>
+<li>allowed sinks, including whether Active File, inbox, agent-memory,
+continuity, or Notion are permitted;</li>
+<li>abandoned-tab, reload, timeout, retry, overlap, and restart
+semantics;</li>
+<li>RED retention and derived-output policy;</li>
+<li>rollback and activation authority.</li>
+</ul>
+<p>The same human review must separately decide whether existing TUI
+fan-out is accepted under a versioned policy, changed, or disabled. v3
+makes none of those product decisions.</p>
+<h3 id="stage-2-and-later">Stage 2 and later</h3>
+<p>Only after Stage 1 may a new run design one replay-safe PWA
+lifecycle. Physical clinical isolation and any Hermes consolidation
+remain separate later gates. Graph/vector work remains deferred until a
+fixed held-out comparison proves material gain.</p>
+<h2 id="rejected-alternatives">9. Rejected alternatives</h2>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>Alternative</th>
+<th>Decision</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>v2 rc3 consent/lifecycle infrastructure</td>
+<td>Reject for this run</td>
+<td>Three tables, six flags, leases, 63 tests, and synthetic-only
+execution do not close the live lifecycle gap</td>
+</tr>
+<tr>
+<td>Default-off PWA fan-out flag</td>
+<td>Reject</td>
+<td>A feature flag is not retention consent; enabled behavior reaches
+multiple sensitive sinks</td>
+</tr>
+<tr>
+<td>Direct call to existing fan-out from <code>/session/end</code></td>
+<td>Reject</td>
+<td>Browser close is not reliable, marker is global, risk/history state
+is incomplete, and consent is absent</td>
+</tr>
+<tr>
+<td>New partial-frontmatter file reader</td>
+<td>Reject</td>
+<td>Existing canonical read is bounded, anchored, revision-checked, and
+single-read; authorization can occur at the existing boundary</td>
+</tr>
+<tr>
+<td>New identity or policy framework</td>
+<td>Reject</td>
+<td>Existing high-ceiling helper is the correct shared control for this
+limited fix</td>
+</tr>
+<tr>
+<td>New key for the marker</td>
+<td>Reject</td>
+<td>Existing state key and helper already cover Dr. Alex free text</td>
+</tr>
+</tbody>
+</table>
+<h2 id="acceptance-and-kill-criteria">10. Acceptance and kill
+criteria</h2>
+<p>Accept only if:</p>
+<ul>
+<li>persisted crash markers contain ciphertext and no synthetic digest
+sentinel;</li>
+<li>a legacy plaintext marker is encrypted before its first replayed
+sink call;</li>
+<li>wrong-key ciphertext fails loudly and keeps the recovery marker
+visible;</li>
+<li>a different session cannot overwrite that pending marker or invoke a
+sink;</li>
+<li><code>include_sensitive=true</code> is refused before recall/index
+access or MCP body fetch for an unapproved or missing MCP launch
+identity or a non-allowlisted direct caller label;</li>
+<li>authorized human CLI and <code>dr-alex</code>, plus low/medium
+behavior, remain green;</li>
+<li>Dr. Alex and agent-memory full test suites pass;</li>
+<li>protected safety files and runtime defaults do not change;</li>
+<li>every reviewer blocker and major finding is closed.</li>
+</ul>
+<p>Reject or revert if any candidate adds a PWA sink, consent table,
+daemon, dependency, new key, clinical data operation, safety-path
+change, plaintext digest, request-based grant, or physical isolation
+claim.</p>
+</body>
+</html>

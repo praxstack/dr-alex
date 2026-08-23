@@ -6,13 +6,18 @@ All I/O seams are injected — no real memctl, no real store, no real continuity
 from __future__ import annotations
 
 import datetime as _dt
+import json
+from dataclasses import asdict
 
 import pytest
+from cryptography.fernet import Fernet
 
-from dr_alex import fanout, memstore, statefile
+from dr_alex import crypto, fanout, memstore, statefile
+from dr_alex import digest as digest_mod
 from dr_alex.digest import SessionDigest, Technique
+from dr_alex.statefile import UnfinalizedMarker
 
-_UTC = _dt.timezone.utc
+_UTC = _dt.UTC
 
 
 def _now() -> _dt.datetime:
@@ -20,13 +25,15 @@ def _now() -> _dt.datetime:
 
 
 def _digest(**over) -> SessionDigest:
-    base = dict(
-        session_id="sess1", started_at="2026-07-18T08:00:00Z", ended_at="2026-07-18T09:00:00Z",
-        risk_tier_max="GREEN",
-        techniques=[Technique("behavioral-activation", "helped")],
-        durable_learnings=["Fact one about Prax.", "Fact two about Prax."],
-        last_topic="morning activation",
-    )
+    base = {
+        "session_id": "sess1",
+        "started_at": "2026-07-18T08:00:00Z",
+        "ended_at": "2026-07-18T09:00:00Z",
+        "risk_tier_max": "GREEN",
+        "techniques": [Technique("behavioral-activation", "helped")],
+        "durable_learnings": ["Fact one about Prax.", "Fact two about Prax."],
+        "last_topic": "morning activation",
+    }
     base.update(over)
     return SessionDigest(**base)
 
@@ -57,13 +64,36 @@ def _seams(tmp_path, remember=None, scrub=None):
         p.write_text(text, encoding="utf-8")
         return p
 
-    return dict(
-        remember_fn=remember or _Recorder(),
-        scrub_fn=scrub or (lambda doc: doc.encode("utf-8")),
-        inbox_dir_fn=lambda: str(inbox),
-        continuity_fn=lambda digest, prior, *, now: "brief text",
-        save_continuity_fn=save_continuity,
-    ), continuity_writes, inbox
+    return (
+        {
+            "remember_fn": remember or _Recorder(),
+            "scrub_fn": scrub or (lambda doc: doc.encode("utf-8")),
+            "inbox_dir_fn": lambda: str(inbox),
+            "continuity_fn": lambda digest, prior, *, now: "brief text",
+            "save_continuity_fn": save_continuity,
+        },
+        continuity_writes,
+        inbox,
+    )
+
+
+def _unfinalized_marker(*, session_id="sess1", digest=None) -> UnfinalizedMarker:
+    return UnfinalizedMarker(
+        session_id=session_id,
+        started_at="2026-07-18T08:00:00Z",
+        end_ts="2026-07-18T09:00:00Z",
+        inbox_filename=f"20260718T090000Z-dr-alex-{session_id}.md",
+        digest=digest if digest is not None else digest_mod.to_jsonable(_digest()),
+    )
+
+
+def _write_raw_marker(path, marker: dict) -> None:
+    path.write_text(json.dumps({"unfinalized": marker}), encoding="utf-8")
+
+
+def _encrypted_digest(payload: bytes) -> str:
+    key = crypto.load_or_create_secret(crypto.STATE_KEY_ACCOUNT)
+    return Fernet(key).encrypt(payload).decode("ascii")
 
 
 def test_normal_finalize_writes_all_channels(tmp_path) -> None:
@@ -72,8 +102,13 @@ def test_normal_finalize_writes_all_channels(tmp_path) -> None:
     seams, continuity_writes, inbox = _seams(tmp_path, remember=rec)
     res = fanout.finalize_session(
         [("user", "hi"), ("assistant", "hey")],
-        session_id="sess1", started_at="2026-07-18T08:00:00Z", risk_tier_max="GREEN",
-        now=_now(), distill_fn=lambda *a, **k: _digest(), state_path=sp, **seams,
+        session_id="sess1",
+        started_at="2026-07-18T08:00:00Z",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(),
+        state_path=sp,
+        **seams,
     )
     # Channel B: both durable learnings written.
     assert len(rec.bodies) == 2
@@ -96,9 +131,14 @@ def test_red_session_withholds_durable_writes(tmp_path) -> None:
     rec = _Recorder()
     seams, _cw, inbox = _seams(tmp_path, remember=rec)
     res = fanout.finalize_session(
-        [("user", "hi")], session_id="sessR", started_at="t", risk_tier_max="RED",
-        now=_now(), distill_fn=lambda *a, **k: _digest(risk_tier_max="RED"),
-        state_path=sp, **seams,
+        [("user", "hi")],
+        session_id="sessR",
+        started_at="t",
+        risk_tier_max="RED",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(risk_tier_max="RED"),
+        state_path=sp,
+        **seams,
     )
     # No durable learnings written on RED (conservative).
     assert rec.bodies == []
@@ -115,8 +155,13 @@ def test_crash_recovery_completes_idempotently(tmp_path) -> None:
 
     # begin() distills + writes the marker; then we "crash" (never call complete).
     fanout.begin(
-        [("user", "hi")], session_id="sess1", started_at="t", risk_tier_max="GREEN",
-        now=_now(), distill_fn=lambda *a, **k: _digest(), state_path=sp,
+        [("user", "hi")],
+        session_id="sess1",
+        started_at="t",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(),
+        state_path=sp,
     )
     assert statefile.load(sp).marker() is not None  # unfinalized
 
@@ -141,8 +186,13 @@ def test_replay_persists_generated_at_even_if_continuity_already_written(tmp_pat
     seams, continuity_writes, _inbox = _seams(tmp_path)
 
     marker = fanout.begin(
-        [("user", "hi")], session_id="sess1", started_at="t", risk_tier_max="GREEN",
-        now=_now(), distill_fn=lambda *a, **k: _digest(), state_path=sp,
+        [("user", "hi")],
+        session_id="sess1",
+        started_at="t",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(),
+        state_path=sp,
     )
     # Simulate: everything done except the final state save (continuity already written).
     marker.remembered = [0, 1]
@@ -165,8 +215,13 @@ def test_partial_remember_ledger_prevents_duplicates(tmp_path) -> None:
     seams, _cw, _inbox = _seams(tmp_path, remember=rec)
 
     marker = fanout.begin(
-        [("user", "hi")], session_id="sess1", started_at="t", risk_tier_max="GREEN",
-        now=_now(), distill_fn=lambda *a, **k: _digest(), state_path=sp,
+        [("user", "hi")],
+        session_id="sess1",
+        started_at="t",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(),
+        state_path=sp,
     )
     # Simulate: index 0 already written before the crash.
     marker.remembered = [0]
@@ -185,8 +240,14 @@ def test_scrub_failure_never_writes_unscrubbed(tmp_path) -> None:
 
     seams, _cw, inbox = _seams(tmp_path, scrub=boom_scrub)
     res = fanout.finalize_session(
-        [("user", "hi")], session_id="sess1", started_at="t", risk_tier_max="GREEN",
-        now=_now(), distill_fn=lambda *a, **k: _digest(), state_path=sp, **seams,
+        [("user", "hi")],
+        session_id="sess1",
+        started_at="t",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(),
+        state_path=sp,
+        **seams,
     )
     assert res.scrub_failed is True
     # No inbox file written when the scrub could not run (privacy fails safe).
@@ -199,8 +260,13 @@ def test_failed_remember_is_retried_on_replay(tmp_path) -> None:
     rec_fail = _Recorder(fail_indices=[1])
     seams, _cw, _inbox = _seams(tmp_path, remember=rec_fail)
     marker = fanout.begin(
-        [("user", "hi")], session_id="sess1", started_at="t", risk_tier_max="GREEN",
-        now=_now(), distill_fn=lambda *a, **k: _digest(), state_path=sp,
+        [("user", "hi")],
+        session_id="sess1",
+        started_at="t",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(),
+        state_path=sp,
     )
     # Complete but DON'T let it clear the marker fully by faking a crash right after
     # remember: re-load the marker to inspect the ledger.
@@ -233,10 +299,15 @@ def test_transient_remember_failure_keeps_session_recoverable(tmp_path) -> None:
     seams, _cw, inbox = _seams(tmp_path, remember=rec)
 
     # First run: the first durable write raises → that index is NOT ledgered → incomplete.
-    res1 = fanout.finalize_session(
+    fanout.finalize_session(
         [("user", "hi"), ("assistant", "hey")],
-        session_id="sess1", started_at="2026-07-18T08:00:00Z", risk_tier_max="GREEN",
-        now=_now(), distill_fn=lambda *a, **k: _digest(), state_path=sp, **seams,
+        session_id="sess1",
+        started_at="2026-07-18T08:00:00Z",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(),
+        state_path=sp,
+        **seams,
     )
     # The session is NOT silently finalized — the marker survives for replay.
     assert statefile.load(sp).marker() is not None
@@ -258,3 +329,171 @@ def test_should_finalize_rules() -> None:
     assert fanout.should_finalize(1, explicit_close=True) is True
     assert fanout.should_finalize(2, explicit_close=False) is False
     assert fanout.should_finalize(3, explicit_close=False) is True
+
+
+def test_recovery_encrypts_legacy_marker_before_first_sink(tmp_path) -> None:
+    sp = tmp_path / "state.json"
+    sentinel = "SYNTHETIC-LEGACY-DIGEST-SENTINEL"
+    digest = digest_mod.to_jsonable(_digest(durable_learnings=[sentinel]))
+    _write_raw_marker(sp, asdict(_unfinalized_marker(digest=digest)))
+    seen: list[str] = []
+
+    def checking_remember(body, **_kwargs):
+        raw_text = sp.read_text(encoding="utf-8")
+        raw_marker = json.loads(raw_text)["unfinalized"]
+        assert "digest_enc" in raw_marker
+        assert "digest" not in raw_marker
+        assert sentinel not in raw_text
+        loaded = statefile.load(sp).marker()
+        assert loaded is not None
+        assert loaded.digest == digest
+        seen.append(body)
+        return memstore.WriteResult(ok=True, id="mem-0")
+
+    seams, _continuity, _inbox = _seams(tmp_path, remember=checking_remember)
+    result = fanout.recover_if_needed(
+        state_path=sp,
+        mirror_fn=lambda _digest: (None, None),
+        **seams,
+    )
+
+    assert result is not None
+    assert seen == [sentinel]
+    assert statefile.load(sp).marker() is None
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "wrong-key",
+        "wrong-key-with-plaintext",
+        "invalid-utf8",
+        "malformed-json",
+        "non-object-json",
+        "missing-outer-field",
+        "extra-outer-field",
+        "wrong-outer-type",
+    ],
+)
+def test_encrypted_marker_corruption_fails_loudly(tmp_path, case) -> None:
+    sp = tmp_path / "state.json"
+    raw_marker = asdict(_unfinalized_marker())
+    legacy_digest = raw_marker.pop("digest")
+    raw_marker["digest_enc"] = _encrypted_digest(json.dumps(legacy_digest).encode("utf-8"))
+
+    if case.startswith("wrong-key"):
+        raw_marker["digest_enc"] = Fernet(Fernet.generate_key()).encrypt(b"{}").decode("ascii")
+        if case.endswith("plaintext"):
+            raw_marker["digest"] = legacy_digest
+    elif case == "invalid-utf8":
+        raw_marker["digest_enc"] = _encrypted_digest(b"\xff")
+    elif case == "malformed-json":
+        raw_marker["digest_enc"] = _encrypted_digest(b"{")
+    elif case == "non-object-json":
+        raw_marker["digest_enc"] = _encrypted_digest(b"[]")
+    elif case == "missing-outer-field":
+        raw_marker.pop("started_at")
+    elif case == "extra-outer-field":
+        raw_marker["unexpected"] = "synthetic"
+    elif case == "wrong-outer-type":
+        raw_marker["remembered"] = [True]
+
+    _write_raw_marker(sp, raw_marker)
+    prior = sp.read_bytes()
+    sink_calls: list[str] = []
+
+    def forbidden_sink(*_args, **_kwargs):
+        sink_calls.append("called")
+        raise AssertionError("corrupt marker reached a sink")
+
+    with pytest.raises(crypto.CryptoError):
+        fanout.recover_if_needed(
+            state_path=sp,
+            remember_fn=forbidden_sink,
+            scrub_fn=forbidden_sink,
+            inbox_dir_fn=forbidden_sink,
+            continuity_fn=forbidden_sink,
+            save_continuity_fn=forbidden_sink,
+            mirror_fn=forbidden_sink,
+        )
+
+    assert sp.read_bytes() == prior
+    assert sink_calls == []
+
+
+def test_marker_encryption_failure_preserves_existing_marker(tmp_path, monkeypatch) -> None:
+    sp = tmp_path / "state.json"
+    statefile.set_unfinalized(_unfinalized_marker(), sp)
+    prior = sp.read_bytes()
+    sink_calls: list[str] = []
+
+    def fail_encrypt(_plaintext):
+        raise crypto.CryptoError("synthetic encryption failure")
+
+    def forbidden_sink(*_args, **_kwargs):
+        sink_calls.append("called")
+        raise AssertionError("encryption failure reached a sink")
+
+    monkeypatch.setattr(crypto, "encrypt", fail_encrypt)
+    with pytest.raises(crypto.CryptoError, match="synthetic encryption failure"):
+        fanout.finalize_session(
+            [("user", "synthetic")],
+            session_id="sess1",
+            started_at="2026-07-18T08:00:00Z",
+            risk_tier_max="GREEN",
+            now=_now(),
+            distill_fn=lambda *_args, **_kwargs: _digest(),
+            state_path=sp,
+            remember_fn=forbidden_sink,
+            scrub_fn=forbidden_sink,
+            inbox_dir_fn=forbidden_sink,
+            continuity_fn=forbidden_sink,
+            save_continuity_fn=forbidden_sink,
+            mirror_fn=forbidden_sink,
+        )
+
+    assert sp.read_bytes() == prior
+    assert sink_calls == []
+
+
+def test_conflicting_session_cannot_replace_pending_marker(tmp_path, monkeypatch) -> None:
+    sp = tmp_path / "state.json"
+    raw_marker = asdict(_unfinalized_marker(session_id="sess-a"))
+    raw_marker.pop("digest")
+    raw_marker["digest_enc"] = Fernet(Fernet.generate_key()).encrypt(b"{}").decode("ascii")
+    _write_raw_marker(sp, raw_marker)
+    prior = sp.read_bytes()
+    decrypt_calls: list[str] = []
+    sink_calls: list[str] = []
+
+    def forbidden_decrypt(_token):
+        decrypt_calls.append("called")
+        raise AssertionError("conflict guard attempted decryption")
+
+    def forbidden_sink(*_args, **_kwargs):
+        sink_calls.append("called")
+        raise AssertionError("conflicting session reached a sink")
+
+    monkeypatch.setattr(crypto, "decrypt", forbidden_decrypt)
+    with pytest.raises(RuntimeError) as exc_info:
+        fanout.finalize_session(
+            [("user", "synthetic")],
+            session_id="sess-b",
+            started_at="2026-07-18T08:00:00Z",
+            risk_tier_max="GREEN",
+            now=_now(),
+            distill_fn=lambda *_args, **_kwargs: _digest(session_id="sess-b"),
+            state_path=sp,
+            remember_fn=forbidden_sink,
+            scrub_fn=forbidden_sink,
+            inbox_dir_fn=forbidden_sink,
+            continuity_fn=forbidden_sink,
+            save_continuity_fn=forbidden_sink,
+            mirror_fn=forbidden_sink,
+        )
+
+    assert exc_info.type is RuntimeError
+    assert str(exc_info.value) == "cannot replace pending marker for another session"
+    assert decrypt_calls == []
+    assert sp.read_bytes() == prior
+    assert sink_calls == []
