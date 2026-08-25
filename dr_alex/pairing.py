@@ -262,7 +262,7 @@ def redeem_pairing_code(
     if raise_locked:
         raise PairingLockedOut("pairing temporarily locked after too many failed attempts")
     if result is not None:
-        _log.info("device paired (id=%s)", result.id)
+        _log.info("device paired")
     return result
 
 

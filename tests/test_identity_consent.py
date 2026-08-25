@@ -652,3 +652,30 @@ def test_d1_t07_end_rechecks_deny_before_draining_pending_fragment(client, monke
     response = _post(client, "/session/end", token, {"session_id": session_id})
     assert response.status_code == 200
     assert statedb.load_transcript(session_id) == []
+
+
+def test_d1_c15_corrupt_policy_store_unhealthy_when_telemetry_off(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "state.db"
+    path.write_bytes(b"not-sqlite")
+    monkeypatch.setenv("DR_ALEX_TELEMETRY_OFF", "1")
+    assert statedb.healthy(path) is False
+
+
+def test_d1_c08_supersedes_follows_instant_not_text_order(tmp_path) -> None:
+    path = tmp_path / "state.db"
+    later = _record(
+        path, transcript_retention="granted", effective_at="2026-08-23T12:00:00.500000Z"
+    )[0]
+    _record(path, transcript_retention="denied", effective_at="2026-08-23T12:00:00Z")
+    newest = _record(path, transcript_retention="withdrawn", effective_at="2026-08-23T12:00:01Z")[0]
+    with sqlite3.connect(path) as conn:
+        prior = conn.execute(
+            "SELECT supersedes FROM consent_receipts WHERE receipt_id=?", (newest,)
+        ).fetchone()[0]
+    assert prior == later
+
+
+def test_d1_i_pairing_success_log_omits_device_id(caplog) -> None:
+    with caplog.at_level(logging.INFO, logger="dr_alex.pairing"):
+        device = _paired_device()
+    assert device.id not in caplog.text

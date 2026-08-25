@@ -258,8 +258,6 @@ def healthy(path: Path | None = None) -> bool:
     first real use, so "absent" is not "broken"). False only when the file exists and cannot
     be opened/read — i.e. corrupt, unreadable, or on a dead volume.
     """
-    if not telemetry_enabled():
-        return True  # kill-switch on: the store is a deliberate no-op, not a fault
     p = path or state_db_path()
     if not p.exists():
         return True
@@ -372,6 +370,10 @@ def _parse_utc(value: object) -> _dt.datetime | None:
         return None
 
 
+def _canonical_utc(value: _dt.datetime) -> str:
+    return value.astimezone(_dt.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
 def validate_consent_input(
     consent: object,
     *,
@@ -425,8 +427,8 @@ def validate_consent_input(
         raise ConsentValidationError("invalid_expires_at")
     return ValidatedConsent(
         decisions=decisions,
-        effective_at=effective_at,
-        expires_at=expires_at,
+        effective_at=_canonical_utc(effective),
+        expires_at=None if expires is None else _canonical_utc(expires),
         policy_version=policy_version,
         copy_version=consent["copy_version"],
         retention_policy_version=consent["retention_policy_version"],
