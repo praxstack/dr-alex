@@ -29,6 +29,7 @@ import shutil
 import signal
 import sqlite3
 import threading as _threading
+import time
 from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -45,6 +46,7 @@ from starlette.concurrency import run_in_threadpool
 from dr_alex import (
     config,
     engine,
+    fanout,
     llm,
     memstore,
     pairing,
@@ -112,6 +114,7 @@ class RoomSession:
         self.started_at = _iso_now()
         self.test_traffic = test_traffic
         self.transcript_policy = "legacy"
+        self.risk_tier_max = Tier.GREEN
         self.mood_phase = "open"
         # Coalesced fragments that a timer/cap flush produced with no live request to stream
         # them back. They are NOT dropped — the next /turn prepends them so the buffered
@@ -182,8 +185,19 @@ async def require_device(
     """FastAPI dependency: 401 unless a valid, non-revoked device token is presented."""
     principal = pairing.resolve_device_token(x_dr_alex_device_token)
     if principal is None:
+        _log.info("event=authorization_denial source=pwa count=1")
         raise HTTPException(status_code=401, detail="device not paired")
     return principal
+
+
+def _owner_matches_principal(
+    owner: statedb.SessionOwner, principal: pairing.DevicePrincipal
+) -> bool:
+    return (
+        owner.actor_principal == principal.actor_principal
+        and owner.subject_id == pairing.local_subject_id()
+        and owner.source == "pwa"
+    )
 
 
 def _require_active_owner(
@@ -196,14 +210,36 @@ def _require_active_owner(
         owner = statedb.get_session_owner(session_id)
     except sqlite3.Error as exc:
         raise HTTPException(status_code=503, detail="policy_state_unavailable") from exc
-    if owner is None or (
-        owner.ended_at is not None
-        or owner.actor_principal != principal.actor_principal
-        or owner.subject_id != pairing.local_subject_id()
-        or owner.source != "pwa"
+    if (
+        owner is None
+        or owner.ended_at is not None
+        or not _owner_matches_principal(owner, principal)
     ):
+        if owner is not None:
+            _log.info("event=owner_mismatch source=pwa count=1")
         raise HTTPException(status_code=404, detail="session_not_found")
     return owner
+
+
+def _require_end_owner(
+    session_id: object, principal: pairing.DevicePrincipal
+) -> tuple[statedb.SessionOwner, statedb.FinalizationOperation | None]:
+    if not isinstance(session_id, str) or not statedb.valid_session_id(session_id):
+        raise HTTPException(status_code=404, detail="session_not_found")
+    try:
+        owner = statedb.get_session_owner(session_id)
+        operation = statedb.get_finalization_operation(session_id)
+    except sqlite3.Error as exc:
+        raise HTTPException(status_code=503, detail="policy_state_unavailable") from exc
+    if (
+        owner is None
+        or not _owner_matches_principal(owner, principal)
+        or (operation is None and (owner.ended_at is not None or session_id not in _sessions))
+    ):
+        if owner is not None:
+            _log.info("event=owner_mismatch source=pwa count=1")
+        raise HTTPException(status_code=404, detail="session_not_found")
+    return owner, operation
 
 
 # ---------------------------------------------------------------------------
@@ -229,9 +265,82 @@ def _refresh_transcript_policy(sess: RoomSession) -> statedb.EffectiveConsent | 
     return consent
 
 
+async def _recover_finalizations(subject_id: str, source: str, seams) -> bool:
+    """Resume this subject's unfinished synthetic operations within the startup budget."""
+    try:
+        session_ids = statedb.recoverable_finalization_sessions(subject_id, source)
+    except Exception as exc:  # noqa: BLE001 — degraded recovery must not break session start
+        _log.warning(
+            "event=finalization_recovery source=%s status=recovery_degraded error_class=%s",
+            source,
+            type(exc).__name__,
+        )
+        return False
+    if not session_ids:
+        return True
+
+    async def recover() -> None:
+        for session_id in session_ids:
+            await run_in_threadpool(
+                fanout.finalize_authorized_session,
+                session_id,
+                subject_id,
+                source,
+                synthetic_seams=seams,
+            )
+
+    try:
+        await asyncio.wait_for(recover(), timeout=config.recovery_timeout_seconds())
+        return True
+    except TimeoutError:
+        _log.warning(
+            "event=finalization_recovery source=%s status=recovery_degraded "
+            "error_class=TimeoutError",
+            source,
+        )
+        return False
+    except Exception as exc:  # noqa: BLE001 — degraded recovery must not break session start
+        _log.warning(
+            "event=finalization_recovery source=%s status=recovery_degraded error_class=%s",
+            source,
+            type(exc).__name__,
+        )
+        return False
+
+
+def _log_finalization(
+    source: str,
+    status: str,
+    *,
+    duplicate: bool,
+    started: float,
+    error_class: str | None,
+) -> None:
+    try:
+        pending_count, oldest_pending_seconds = statedb.finalization_pending_stats(source)
+    except sqlite3.Error:
+        pending_count, oldest_pending_seconds = -1, -1
+    _log.info(
+        "event=finalization source=%s status=%s pending_count=%d "
+        "oldest_pending_seconds=%d duplicate_end_count=%d duration_ms=%d error_class=%s",
+        source,
+        status,
+        pending_count,
+        oldest_pending_seconds,
+        int(duplicate),
+        int((time.perf_counter() - started) * 1000),
+        error_class or "none",
+    )
+
+
 def _run_turn_blocking(sess: RoomSession, text: str) -> engine.TurnOutcome:
     """Run the SINGLE turn function on a worker thread (it may spawn the model subprocess)."""
     _refresh_transcript_policy(sess)
+
+    def current_transcript_policy() -> str:
+        _refresh_transcript_policy(sess)
+        return sess.transcript_policy
+
     out = engine.run_turn(
         text,
         history=list(sess.history),
@@ -240,7 +349,10 @@ def _run_turn_blocking(sess: RoomSession, text: str) -> engine.TurnOutcome:
         system_prompt_override=sess.system_prompt,
         memory_ids=sess.memory_ids,
         transcript_policy=sess.transcript_policy,
+        transcript_policy_resolver=current_transcript_policy,
     )
+    if out.tier is Tier.RED or (out.tier is Tier.AMBER and sess.risk_tier_max is Tier.GREEN):
+        sess.risk_tier_max = out.tier
     # Maintain conversation history for GREEN/AMBER turns (RED is not a conversational turn).
     if out.tier is not Tier.RED:
         sess.history.append(llm.Message(role="user", content=text))
@@ -505,9 +617,18 @@ def create_app() -> FastAPI:
         mood = _as_mood(payload.get("mood"))
         if mood is not None:
             _record_mood(sess, "open", mood)
+        recovery_complete = True
+        if enforcement:
+            recovery_complete = await _recover_finalizations(
+                subject_id,
+                "pwa",
+                getattr(request.app.state, "synthetic_finalization_seams", None),
+            )
         # Session-start memory context (G20), off the request's hot path is not needed here —
-        # it's a one-time assemble and degrades safely.
-        await run_in_threadpool(sess.assemble_memory)
+        # it's a one-time assemble and degrades safely. A timed-out recovery may still own a
+        # worker thread, so keep the base prompt rather than read a sink while it is mutating.
+        if recovery_complete:
+            await run_in_threadpool(sess.assemble_memory)
         ack = None
         try:
             ack = telemetry.take_repair_ack()
@@ -538,7 +659,7 @@ def create_app() -> FastAPI:
     ) -> JSONResponse:
         payload = await _json(request)
         sid = payload.get("session_id")
-        owner = _require_active_owner(sid, principal)
+        owner, existing_operation = _require_end_owner(sid, principal)
         sess = _sessions.get(sid) if sid else None
         mood = _as_mood(payload.get("mood"))
         if sess is not None and mood is not None:
@@ -562,7 +683,41 @@ def create_app() -> FastAPI:
                 except Exception as exc:  # noqa: BLE001 — finalize must never fail on a leftover turn
                     # NEVER log ``leftover`` itself (R3) — the exception class only.
                     _log.warning("session-end leftover turn failed: %s", type(exc).__name__)
-        if sid:
+        receipt = None
+        if sid and config.consent_enforcement_enabled():
+            finalization_started = time.perf_counter()
+            try:
+                receipt = await run_in_threadpool(
+                    fanout.finalize_authorized_session,
+                    sid,
+                    owner.subject_id,
+                    owner.source,
+                    risk_tier_max=sess.risk_tier_max.value if sess is not None else "GREEN",
+                    turns=[(message.role, message.content) for message in sess.history]
+                    if sess is not None
+                    else None,
+                    started_at=sess.started_at if sess is not None else "",
+                    synthetic_seams=getattr(
+                        request.app.state, "synthetic_finalization_seams", None
+                    ),
+                )
+            except Exception as exc:
+                _log_finalization(
+                    owner.source,
+                    "recovery_pending",
+                    duplicate=existing_operation is not None,
+                    started=finalization_started,
+                    error_class=type(exc).__name__,
+                )
+                raise
+            _log_finalization(
+                owner.source,
+                receipt.status,
+                duplicate=existing_operation is not None,
+                started=finalization_started,
+                error_class=receipt.error_class,
+            )
+        if sid and owner.ended_at is None:
             try:
                 closed = statedb.close_session_owner(
                     sid,
@@ -573,13 +728,42 @@ def create_app() -> FastAPI:
             except sqlite3.Error as exc:
                 raise HTTPException(status_code=503, detail="policy_state_unavailable") from exc
             if not closed:
-                raise HTTPException(status_code=404, detail="session_not_found")
-            try:
-                statedb.end_session(sid)
-            except Exception as exc:  # noqa: BLE001
-                _log.warning("end_session telemetry failed: %s", type(exc).__name__)
-            _sessions.pop(sid, None)
-        return JSONResponse({"ok": True})
+                try:
+                    current_owner = statedb.get_session_owner(sid)
+                except sqlite3.Error as exc:
+                    raise HTTPException(status_code=503, detail="policy_state_unavailable") from exc
+                if (
+                    current_owner is None
+                    or current_owner.ended_at is None
+                    or current_owner.subject_id != owner.subject_id
+                    or current_owner.actor_principal != owner.actor_principal
+                    or current_owner.source != owner.source
+                ):
+                    raise HTTPException(status_code=404, detail="session_not_found")
+            else:
+                try:
+                    statedb.end_session(sid)
+                except Exception as exc:  # noqa: BLE001
+                    _log.warning("end_session telemetry failed: %s", type(exc).__name__)
+                _sessions.pop(sid, None)
+        if receipt is None:
+            return JSONResponse({"ok": True})
+        incomplete = receipt.status in {"finalization_unavailable", "recovery_pending"}
+        return JSONResponse(
+            {
+                "ok": not incomplete,
+                "complete": not incomplete,
+                "finalization": {
+                    "status": receipt.status,
+                    "operation_id": receipt.operation_id,
+                    "memory_written": receipt.memory_written,
+                    "error_class": receipt.error_class,
+                },
+            },
+            status_code={"finalization_unavailable": 503, "recovery_pending": 202}.get(
+                receipt.status, 200
+            ),
+        )
 
     # -- gated: the turn (SSE) --------------------------------------------
 
@@ -591,7 +775,9 @@ def create_app() -> FastAPI:
         payload = await _json(request)
         session_id = payload.get("session_id")
         _require_active_owner(session_id, principal)
-        sess = _get_or_create_session(session_id)
+        sess = _sessions.get(session_id) if isinstance(session_id, str) else None
+        if sess is None:
+            raise HTTPException(status_code=404, detail="session_not_found")
         text = str(payload.get("text", "") or "")
         is_fragment = bool(payload.get("fragment", False))
 

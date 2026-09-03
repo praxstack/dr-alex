@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Why v3 stopped</title>
+<style>
+:root{color-scheme:light dark}*{box-sizing:border-box}body{margin:0;padding:28px;font:17px/1.45 system-ui,-apple-system,sans-serif;background:#10141d;color:#f4f6fb}main{max-width:900px;margin:auto}h1{font-size:clamp(32px,6vw,64px);line-height:1;margin:0 0 12px}h2{font-size:24px;margin:0 0 10px}.lead{font-size:21px;color:#bdc8da;margin:0 0 30px}.flow{display:grid;grid-template-columns:1fr;gap:12px}.card{border:1px solid #39445a;border-radius:16px;padding:20px;background:#171d29}.num{display:inline-grid;place-items:center;width:38px;height:38px;border-radius:50%;background:#2e69ff;font-weight:800;margin-right:10px}.arrow{text-align:center;font-size:30px;color:#7f91ad}.fail{border-color:#a94852;background:#29191d}.pass{border-color:#2c9665;background:#14251d}.tiny{color:#aeb9ca;font-size:15px}.compare{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:24px}.label{font-weight:800;font-size:20px}.bad{color:#ff8b92}.good{color:#76dfa6}.bottom{margin-top:26px;padding:22px;border-radius:16px;background:#e7f0ff;color:#101a2c}.bottom strong{font-size:22px}@media(max-width:650px){body{padding:18px}.compare{grid-template-columns:1fr}}
+</style>
+</head>
+<body><main>
+<h1>Why v3 stopped</h1>
+<p class="lead">The team refused to build from instructions that disagreed about a safety check.</p>
+
+<section class="flow">
+  <div class="card"><span class="num">1</span><strong>Write the safety blueprint first.</strong><p>Memory work needed clear consent, ownership, encryption, and recovery rules before code.</p></div>
+  <div class="arrow">↓</div>
+  <div class="card fail"><span class="num">2</span><strong>RC3 failed review.</strong><p>A retried End request could not recover. Consent replay and the first recovery lock were also unclear.</p></div>
+  <div class="arrow">↓</div>
+  <div class="card fail"><span class="num">3</span><strong>RC4 fixed those problems, but left one contradiction.</strong><p>One section said to check consent before taking the recovery lock. Another said to take the lock first.</p></div>
+  <div class="arrow">↓</div>
+  <div class="card"><span class="num">4</span><strong>The v3 rule said stop after two failed drafts.</strong><p>So v3 stopped. No code, live service, clinical data, or Telegram setup changed.</p></div>
+</section>
+
+<div class="compare">
+  <div class="card"><div class="label bad">Wrong order</div><p>Take recovery lock<br>then check permission</p></div>
+  <div class="card"><div class="label good">Safe order</div><p>Check current permission<br>then take recovery lock</p></div>
+</div>
+
+<section class="bottom">
+  <strong>This report is historical, not the current state.</strong>
+  <p>You later authorized a new run. V5 fixed the wording, kept the same 63 safety outcomes plus eight added checks, and passed Codex, Grok, and a fresh-context reviewer. D1 and M1-A implementation is now running in isolated worktrees. Activation is still prohibited.</p>
+</section>
+
+<p class="tiny">Consent means the user's current permission. A lease means a short recovery lock so only one worker performs the operation.</p>
+</main></body></html>

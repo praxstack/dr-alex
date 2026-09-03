@@ -43,18 +43,30 @@ def _capture(monkeypatch, proc: _Proc):
 
 
 def test_recall_argv_uses_dr_alex_identity_and_high_ceiling(monkeypatch) -> None:
-    payload = json.dumps([{
-        "id": "m1", "type": "user", "status": "active", "valid_from": "2026-07-01",
-        "invalid_at": None, "importance": 70, "sensitivity": "high", "score": 70.0,
-        "snippet": "behavioral activation helps mornings",
-    }]).encode()
+    payload = json.dumps(
+        [
+            {
+                "id": "m1",
+                "type": "user",
+                "status": "active",
+                "valid_from": "2026-07-01",
+                "invalid_at": None,
+                "importance": 70,
+                "sensitivity": "high",
+                "score": 70.0,
+                "snippet": "behavioral activation helps mornings",
+            }
+        ]
+    ).encode()
     calls = _capture(monkeypatch, _Proc(0, payload, b""))
 
     hits = memstore.recall("morning lows", k=5)
     argv = calls["argv"]
     assert "--agent" in argv and argv[argv.index("--agent") + 1] == "dr-alex"
     assert "--client" in argv and argv[argv.index("--client") + 1] == "dr-alex"
-    assert "--sensitivity-ceiling" in argv and argv[argv.index("--sensitivity-ceiling") + 1] == "high"
+    assert (
+        "--sensitivity-ceiling" in argv and argv[argv.index("--sensitivity-ceiling") + 1] == "high"
+    )
     assert "recall" in argv
     assert "--filter" in argv and "tag=therapy" in argv
     # G14: NO --as-of, so memctl applies status=active + valid-as-of-now by default.
@@ -85,9 +97,11 @@ def test_recall_degrades_to_empty_on_bad_json(monkeypatch) -> None:
 
 def test_recall_returns_empty_when_memory_disabled(monkeypatch) -> None:
     monkeypatch.setenv("DR_ALEX_MEMORY_OFF", "1")
+
     # _run must never even be called when disabled.
     def boom(*a, **k):  # pragma: no cover
         raise AssertionError("must not spawn when memory disabled")
+
     monkeypatch.setattr(memstore, "_run", boom)
     assert memstore.recall("x") == []
 
@@ -104,6 +118,16 @@ def test_remember_argv_and_high_sensitivity(monkeypatch) -> None:
     assert argv[argv.index("--type") + 1] == "user"
     assert "therapy" in argv[argv.index("--tags") + 1]
     assert calls["input"] == b"A durable fact."
+
+
+def test_remember_passes_idempotency_key(monkeypatch) -> None:
+    calls = _capture(monkeypatch, _Proc(0, json.dumps({"id": "same-mem"}).encode(), b""))
+
+    result = memstore.remember("Synthetic fact.", idempotency_key="finalize-v1:abc123")
+
+    argv = calls["argv"]
+    assert result.ok and result.id == "same-mem"
+    assert argv[argv.index("--idempotency-key") + 1] == "finalize-v1:abc123"
 
 
 def test_remember_clamps_importance_to_80(monkeypatch) -> None:

@@ -25,19 +25,36 @@ so replay never duplicates a memory or writes a second inbox file.
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
+import inspect
+import json
 import logging
+import secrets
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
 _log = logging.getLogger("dr_alex.fanout")
 
+from dr_alex import config, crypto, memstore, statedb, statefile
 from dr_alex import continuity as _continuity
 from dr_alex import digest as _digest
-from dr_alex import memstore, statefile
 from dr_alex.digest import SessionDigest
 from dr_alex.statefile import SessionState, UnfinalizedMarker
 
 MIN_USER_TURNS = 2  # fan-out triggers only when a real conversation happened (> 2 user turns)
+_SYNTHETIC_SEAM_KEYS = frozenset(
+    {
+        "distill_fn",
+        "remember_fn",
+        "scrub_fn",
+        "inbox_dir_fn",
+        "load_continuity_fn",
+        "continuity_fn",
+        "save_continuity_fn",
+        "mirror_fn",
+    }
+)
 
 
 @dataclass
@@ -52,6 +69,381 @@ class FanoutResult:
     # Phase 6 — canonical record (local truth) + Notion mirror.
     active_file_path: str | None = None
     notion_op: str | None = None  # "create" | "patch" | None (disabled / failed)
+    complete: bool = True
+
+
+@dataclass(frozen=True)
+class LifecycleReceipt:
+    status: str
+    operation_id: str
+    memory_written: bool = False
+    error_class: str | None = None
+
+
+class _FinalizationLeaseLost(RuntimeError):
+    pass
+
+
+class _FinalizationConsentWithdrawn(RuntimeError):
+    pass
+
+
+_OPERATIONAL_FINALIZATION_ERRORS = (
+    OSError,
+    sqlite3.Error,
+    crypto.CryptoError,
+    json.JSONDecodeError,
+    memstore.ScrubError,
+)
+
+
+def _receipt(operation: statedb.FinalizationOperation) -> LifecycleReceipt:
+    try:
+        steps = json.loads(operation.step_state)
+        memory_written = bool(steps.get("memory_written", steps.get("remembered")))
+    except (AttributeError, TypeError, ValueError):
+        memory_written = False
+    return LifecycleReceipt(
+        operation.status,
+        operation.operation_id,
+        memory_written=memory_written,
+        error_class=operation.error_class,
+    )
+
+
+def _pending_receipt(operation: statedb.FinalizationOperation) -> LifecycleReceipt:
+    receipt = _receipt(operation)
+    return LifecycleReceipt(
+        "recovery_pending",
+        receipt.operation_id,
+        memory_written=receipt.memory_written,
+        error_class=receipt.error_class,
+    )
+
+
+def _complete_synthetic_runner(seams: dict[str, object] | None) -> bool:
+    return (
+        isinstance(seams, dict)
+        and set(seams) == _SYNTHETIC_SEAM_KEYS
+        and all(callable(value) for value in seams.values())
+    )
+
+
+def _sink_id(subject_id: str, session_id: str, step: str, policy_version: str) -> str:
+    components = json.dumps(
+        [subject_id, session_id, step, policy_version],
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode()
+    return f"dr-alex-finalize-v1:{hashlib.sha256(components).hexdigest()}"
+
+
+def _step_state(marker: UnfinalizedMarker, *, memory_written: bool | None = None) -> str:
+    value = {
+        "remembered": marker.remembered,
+        "inbox_written": marker.inbox_written,
+        "continuity_written": marker.continuity_written,
+        "mirror_written": marker.mirror_written,
+    }
+    if memory_written is not None:
+        value["memory_written"] = memory_written
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def finalize_authorized_session(
+    session_id: str,
+    subject_id: str,
+    source: str,
+    _consent: statedb.EffectiveConsent | None = None,
+    *,
+    risk_tier_max: str = "GREEN",
+    turns: list[tuple[str, str]] | None = None,
+    started_at: str = "",
+    distill_fn=None,
+    synthetic_seams: dict[str, object] | None = None,
+    now: _dt.datetime | None = None,
+) -> LifecycleReceipt:
+    """Finalize one consent-authorized PWA session or replay its stored receipt."""
+    operation = statedb.get_finalization_operation(session_id)
+    if operation is not None and (operation.subject_id, operation.source) != (
+        subject_id,
+        source,
+    ):
+        raise ValueError("finalization owner mismatch")
+    if operation is not None and operation.payload_enc is None:
+        return _receipt(operation)
+    consent = statedb.resolve_consent(subject_id, source)
+    fixed_now = now
+
+    def lease_now() -> _dt.datetime:
+        return fixed_now or _dt.datetime.now(_dt.UTC)
+
+    now = lease_now()
+    worker_id = secrets.token_hex(16)
+    lease_seconds = config.recovery_timeout_seconds()
+    owns_lease = False
+    if operation is None:
+        payload = None
+        lease_owner = None
+        policy_version = config.memory_policy_version()
+        if not consent.transcript_retention:
+            status = "closed_transient"
+        elif risk_tier_max == "RED":
+            status = "finalized_red_withheld"
+        elif not consent.durable_memory:
+            status = "finalized_no_memory_consent"
+        elif not config.pwa_durable_finalization_enabled():
+            status = "finalization_disabled"
+        else:
+            payload = json.dumps(
+                {
+                    "history": turns or [],
+                    "inbox_filename": f"{_sink_id(subject_id, session_id, 'inbox', policy_version)}.md",
+                    "policy_version": policy_version,
+                    "risk_tier_max": risk_tier_max,
+                    "started_at": started_at,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            status = "running"
+            lease_owner = worker_id
+        operation = statedb.create_finalization(
+            session_id,
+            subject_id=subject_id,
+            source=source,
+            status=status,
+            payload=payload,
+            lease_owner=lease_owner,
+            lease_seconds=lease_seconds if lease_owner is not None else None,
+            now=now,
+        )
+        owns_lease = (
+            payload is not None
+            and operation.lease_owner == worker_id
+            and operation.lease_generation == 1
+        )
+        if payload is not None and not owns_lease:
+            return _pending_receipt(operation)
+    else:
+        if not statedb.claim_finalization(
+            operation.operation_id,
+            lease_owner=worker_id,
+            lease_seconds=lease_seconds,
+            now=now,
+        ):
+            return _pending_receipt(operation)
+        operation = statedb.get_finalization_operation(session_id)
+        if operation is None:
+            raise RuntimeError("claimed finalization disappeared")
+        owns_lease = True
+        if not consent.transcript_retention or not consent.durable_memory:
+            updated = statedb.update_finalization_fenced(
+                operation.operation_id,
+                lease_owner=worker_id,
+                lease_generation=operation.lease_generation,
+                step_state=operation.step_state,
+                status="finalized_no_memory_consent",
+                clear_payload=True,
+                release_lease=True,
+                error_class="consent_withdrawn",
+                now=lease_now(),
+            )
+            current = statedb.get_finalization_operation(session_id)
+            if current is None:
+                raise RuntimeError("finalization disappeared")
+            return _receipt(current) if updated else _pending_receipt(current)
+    if operation.payload_enc is None:
+        return _receipt(operation)
+
+    def current_receipt() -> LifecycleReceipt:
+        current = statedb.get_finalization_operation(session_id)
+        if current is None:
+            raise RuntimeError("finalization disappeared")
+        if current.payload_enc is None:
+            return _receipt(current)
+        return _pending_receipt(current)
+
+    def require_current_consent(step_state: str) -> statedb.EffectiveConsent:
+        current = statedb.resolve_consent(subject_id, source)
+        if current.transcript_retention and current.durable_memory:
+            return current
+        if not statedb.update_finalization_fenced(
+            operation.operation_id,
+            lease_owner=worker_id,
+            lease_generation=operation.lease_generation,
+            step_state=step_state,
+            status="finalized_no_memory_consent",
+            clear_payload=True,
+            release_lease=True,
+            error_class="consent_withdrawn",
+            now=lease_now(),
+        ):
+            raise _FinalizationLeaseLost
+        raise _FinalizationConsentWithdrawn
+
+    try:
+        consent = require_current_consent(operation.step_state)
+    except (_FinalizationLeaseLost, _FinalizationConsentWithdrawn):
+        return current_receipt()
+
+    def fence_failure(exc: Exception) -> LifecycleReceipt:
+        current = statedb.get_finalization_operation(session_id)
+        if current is None:
+            raise RuntimeError("finalization disappeared") from exc
+        error_class = type(exc).__name__
+        _log.warning(
+            "finalization_failed source=%s status=recovery_pending error_class=%s",
+            source,
+            error_class,
+        )
+        updated = statedb.update_finalization_fenced(
+            operation.operation_id,
+            lease_owner=worker_id,
+            lease_generation=operation.lease_generation,
+            step_state=current.step_state,
+            status="recovery_pending",
+            release_lease=True,
+            error_class=error_class,
+            now=lease_now(),
+        )
+        if not updated:
+            return current_receipt()
+        current = statedb.get_finalization_operation(session_id)
+        if current is None:
+            raise RuntimeError("finalization disappeared") from exc
+        return _receipt(current)
+
+    def run_owned() -> LifecycleReceipt:
+        if not _complete_synthetic_runner(synthetic_seams):
+            if owns_lease:
+                updated = statedb.update_finalization_fenced(
+                    operation.operation_id,
+                    lease_owner=worker_id,
+                    lease_generation=operation.lease_generation,
+                    step_state=operation.step_state,
+                    status="finalization_unavailable",
+                    release_lease=True,
+                    error_class="runner_unavailable",
+                    now=lease_now(),
+                )
+                current = statedb.get_finalization_operation(session_id)
+                if current is None:
+                    raise RuntimeError("finalization disappeared")
+                return _receipt(current) if updated else _pending_receipt(current)
+            return _receipt(operation)
+        assert synthetic_seams is not None
+        runner = synthetic_seams.copy()
+        runner_distill = runner.pop("distill_fn")
+        assert callable(runner_distill)
+        envelope = json.loads(crypto.decrypt(operation.payload_enc) or "{}")
+        policy_version = envelope.get("policy_version")
+        if not isinstance(policy_version, str):
+            policy_version = config.memory_policy_version()
+        digest_json = envelope.get("digest")
+        if not isinstance(digest_json, dict):
+            history = [
+                (str(item[0]), str(item[1]))
+                for item in envelope.get("history", [])
+                if isinstance(item, (list, tuple)) and len(item) == 2
+            ]
+            digest = (distill_fn or runner_distill)(
+                history,
+                session_id=session_id,
+                started_at=str(envelope.get("started_at", started_at)),
+                risk_tier_max=str(envelope.get("risk_tier_max", risk_tier_max)),
+                now=now,
+            )
+            if not isinstance(digest, SessionDigest):
+                raise TypeError("synthetic distill returned invalid digest")
+            digest_json = _digest.to_jsonable(digest)
+            envelope = {
+                "digest": digest_json,
+                "inbox_filename": envelope.get("inbox_filename"),
+                "policy_version": policy_version,
+            }
+            if not statedb.update_finalization_fenced(
+                operation.operation_id,
+                lease_owner=worker_id,
+                lease_generation=operation.lease_generation,
+                step_state=operation.step_state,
+                payload=json.dumps(envelope, sort_keys=True, separators=(",", ":")),
+                now=lease_now(),
+            ):
+                current = statedb.get_finalization_operation(session_id)
+                if current is None:
+                    raise RuntimeError("finalization disappeared")
+                return _pending_receipt(current)
+        steps = json.loads(operation.step_state)
+        marker = UnfinalizedMarker(
+            session_id=session_id,
+            started_at=digest_json["started_at"],
+            end_ts=digest_json["ended_at"],
+            inbox_filename=envelope.get("inbox_filename")
+            or _digest.inbox_filename(session_id, now),
+            digest=digest_json,
+            remembered=steps.get("remembered", []),
+            inbox_written=steps.get("inbox_written", False),
+            continuity_written=steps.get("continuity_written", False),
+        )
+
+        def persist_step(value):
+            if not statedb.update_finalization_fenced(
+                operation.operation_id,
+                lease_owner=worker_id,
+                lease_generation=operation.lease_generation,
+                step_state=_step_state(value),
+                now=lease_now(),
+            ):
+                raise _FinalizationLeaseLost
+
+        def before_step(_step: str) -> None:
+            require_current_consent(_step_state(marker))
+            if not statedb.renew_finalization(
+                operation.operation_id,
+                lease_owner=worker_id,
+                lease_generation=operation.lease_generation,
+                lease_seconds=lease_seconds,
+                now=lease_now(),
+            ):
+                raise _FinalizationLeaseLost
+
+        result = complete_digest(
+            marker,
+            persist_step=persist_step,
+            before_step=before_step,
+            idempotency_key_fn=lambda step: _sink_id(subject_id, session_id, step, policy_version),
+            mirror_ledger=True,
+            strict_sink_errors=True,
+            now=now,
+            **runner,
+        )
+        memory_written = bool(marker.remembered)
+        updated = statedb.update_finalization_fenced(
+            operation.operation_id,
+            lease_owner=worker_id,
+            lease_generation=operation.lease_generation,
+            step_state=_step_state(marker, memory_written=memory_written),
+            status="finalized" if result.complete else "recovery_pending",
+            clear_payload=result.complete,
+            release_lease=True,
+            error_class=None if result.complete else "fanout_incomplete",
+            now=lease_now(),
+        )
+        current = statedb.get_finalization_operation(session_id)
+        if current is None:
+            raise RuntimeError("finalization disappeared")
+        return _receipt(current) if updated else _pending_receipt(current)
+
+    try:
+        return run_owned()
+    except (_FinalizationLeaseLost, _FinalizationConsentWithdrawn):
+        return current_receipt()
+    except _OPERATIONAL_FINALIZATION_ERRORS as exc:
+        return fence_failure(exc)
+    except Exception as exc:
+        fence_failure(exc)
+        raise
 
 
 def should_finalize(user_turns: int, *, explicit_close: bool) -> bool:
@@ -78,8 +470,11 @@ def begin(
 ) -> UnfinalizedMarker:
     """Distill the session and persist the unfinalized marker (the point of no half-work)."""
     digest = distill_fn(
-        turns, session_id=session_id, started_at=started_at,
-        risk_tier_max=risk_tier_max, now=now,
+        turns,
+        session_id=session_id,
+        started_at=started_at,
+        risk_tier_max=risk_tier_max,
+        now=now,
     )
     # Phase-4 seam: the user's own mood chips are ground truth — prefer them over the
     # model's inferred mood_in/mood_out when they were recorded this session.
@@ -115,41 +510,97 @@ def begin(
 def complete(
     marker: UnfinalizedMarker,
     *,
+    state_path: Path | None = None,
+    **seams,
+) -> FanoutResult:
+    """Complete legacy TUI fan-out through the shared digest writer."""
+    return complete_digest(
+        marker,
+        persist_step=lambda value: statefile.set_unfinalized(value, state_path),
+        before_mirror=lambda complete: _finalize_state(
+            marker,
+            _digest.from_jsonable(marker.digest),
+            state_path,
+            keep_marker=not complete,
+        ),
+        **seams,
+    )
+
+
+def complete_digest(
+    marker: UnfinalizedMarker,
+    *,
+    persist_step,
     now: _dt.datetime | None = None,
     remember_fn=memstore.remember,
     scrub_fn=memstore.scrub_document,
     inbox_dir_fn=memstore.inbox_dir,
+    load_continuity_fn=_continuity.load_continuity_text,
     continuity_fn=_digest.regenerate_continuity,
     save_continuity_fn=_continuity.save_continuity_text,
     mirror_fn=None,
-    state_path: Path | None = None,
+    before_mirror=None,
+    before_step=None,
+    idempotency_key_fn=None,
+    mirror_ledger: bool = False,
+    strict_sink_errors: bool = False,
 ) -> FanoutResult:
-    """Complete (or resume) the fan-out for one session. Every step is idempotent."""
+    """Write one digest through injected seams without touching a recovery marker."""
     now = now or _dt.datetime.now(_dt.UTC)
     digest: SessionDigest = _digest.from_jsonable(marker.digest)
     is_red = digest.risk_tier_max == "RED"
-
-    written_ids = _channel_b_durable(marker, digest, is_red, remember_fn, state_path)
-    inbox_path, scrub_failed = _channel_c_inbox(marker, digest, scrub_fn, inbox_dir_fn, state_path)
-    _regenerate_continuity(marker, digest, now, continuity_fn, save_continuity_fn, state_path)
-
-    # D5: only clear the crash-safety marker when EVERY durable step actually completed. A
-    # transient remember/scrub failure must NOT be swallowed by unconditionally clearing the
-    # marker — leave it so the next session-start recover_if_needed replays the missing steps
-    # (each is idempotent, so replay never duplicates a memory or inbox file).
+    written_ids = _channel_b_durable(
+        marker,
+        digest,
+        is_red,
+        remember_fn,
+        persist_step,
+        idempotency_key_fn,
+        before_step,
+        strict_sink_errors,
+    )
+    inbox_path, scrub_failed = _channel_c_inbox(
+        marker, digest, scrub_fn, inbox_dir_fn, persist_step, before_step
+    )
+    _regenerate_continuity(
+        marker,
+        digest,
+        now,
+        load_continuity_fn,
+        continuity_fn,
+        save_continuity_fn,
+        persist_step,
+        before_step,
+    )
     incomplete = _fanout_incomplete(marker, digest, is_red)
     if incomplete:
         _log.warning(
-            "session-end fan-out INCOMPLETE for %s: %s — marker kept for crash-safe replay "
-            "at next session start (nothing dropped)",
-            marker.session_id, "; ".join(incomplete),
+            "session-end fan-out INCOMPLETE for %s: %s",
+            marker.session_id,
+            "; ".join(incomplete),
         )
-    _finalize_state(marker, digest, state_path, keep_marker=bool(incomplete))
-
-    # Phase 6 — canonical local record FIRST (local truth), THEN the Notion mirror. Both are
-    # idempotent (session_id-keyed) and strictly best-effort: neither may break session end.
-    active_path, notion_op = _mirror_canonical(digest, mirror_fn=mirror_fn)
-
+    complete = not incomplete
+    if before_mirror is not None:
+        before_mirror(complete)
+    active_path = notion_op = None
+    if mirror_ledger:
+        if not marker.mirror_written:
+            if before_step is not None:
+                before_step("mirror")
+            key = idempotency_key_fn("mirror") if idempotency_key_fn is not None else None
+            active_path, notion_op = _mirror_canonical(
+                digest,
+                mirror_fn=mirror_fn,
+                idempotency_key=key,
+                strict=True,
+            )
+            marker.mirror_written = True
+            persist_step(marker)
+        complete = complete and marker.mirror_written
+    else:
+        if before_step is not None:
+            before_step("mirror")
+        active_path, notion_op = _mirror_canonical(digest, mirror_fn=mirror_fn)
     return FanoutResult(
         session_id=marker.session_id,
         remembered=written_ids,
@@ -160,6 +611,7 @@ def complete(
         scrub_failed=scrub_failed,
         active_file_path=active_path,
         notion_op=notion_op,
+        complete=complete,
     )
 
 
@@ -182,7 +634,16 @@ def _fanout_incomplete(marker, digest, is_red) -> list[str]:
     return reasons
 
 
-def _channel_b_durable(marker, digest, is_red, remember_fn, state_path) -> list[str]:
+def _channel_b_durable(
+    marker,
+    digest,
+    is_red,
+    remember_fn,
+    persist_step,
+    idempotency_key_fn,
+    before_step,
+    strict_sink_errors,
+) -> list[str]:
     """Write durable learnings (skip on RED; skip already-ledgered indices). Idempotent."""
     written_ids: list[str] = []
     if is_red:
@@ -191,30 +652,48 @@ def _channel_b_durable(marker, digest, is_red, remember_fn, state_path) -> list[
     for i, learning in enumerate(digest.durable_learnings):
         if i in remembered_idx:
             continue
+        if before_step is not None:
+            before_step(f"memory:{i}")
         # D5: a transient remember failure — whether it returns ok=False OR raises — must
         # leave this index OUT of the ledger so a later replay retries it, never silently
         # drop the learning. The marker is kept (see _fanout_incomplete) so recovery runs.
         try:
-            res = remember_fn(learning, tags=["therapy"], sensitivity="high",
-                              importance=memstore.IMPORTANCE_MAX, memtype="user")
-        except Exception:  # noqa: BLE001 — a transient store error is recoverable, not fatal
-            _log.warning("durable remember failed (transient) for %s idx=%s — will retry on replay",
-                         marker.session_id, i)
+            kwargs = {
+                "tags": ["therapy"],
+                "sensitivity": "high",
+                "importance": memstore.IMPORTANCE_MAX,
+                "memtype": "user",
+            }
+            if idempotency_key_fn is not None:
+                kwargs["idempotency_key"] = idempotency_key_fn(f"memory:{i}")
+            res = remember_fn(learning, **kwargs)
+        except Exception:  # noqa: BLE001 — PWA classifies errors at the operation boundary
+            if strict_sink_errors:
+                raise
+            _log.warning(
+                "durable remember failed (transient) for %s idx=%s — will retry on replay",
+                marker.session_id,
+                i,
+            )
             continue
         if res.ok:
             if res.id:
                 written_ids.append(res.id)
             remembered_idx.append(i)
             marker.remembered = remembered_idx
-            statefile.set_unfinalized(marker, state_path)
+            persist_step(marker)
         # A failed write is left OUT of the ledger so a later replay retries it.
     return written_ids
 
 
-def _channel_c_inbox(marker, digest, scrub_fn, inbox_dir_fn, state_path) -> tuple[str | None, bool]:
+def _channel_c_inbox(
+    marker, digest, scrub_fn, inbox_dir_fn, persist_step, before_step
+) -> tuple[str | None, bool]:
     """Scrub + write the inbox digest (deterministic filename ⇒ replay overwrites, never dupes)."""
     if marker.inbox_written:
         return str(Path(inbox_dir_fn()) / marker.inbox_filename), False
+    if before_step is not None:
+        before_step("inbox")
     document = _digest.render_inbox_markdown(digest)
     try:
         clean = scrub_fn(document)
@@ -227,18 +706,29 @@ def _channel_c_inbox(marker, digest, scrub_fn, inbox_dir_fn, state_path) -> tupl
     path = inbox / marker.inbox_filename
     path.write_bytes(clean)
     marker.inbox_written = True
-    statefile.set_unfinalized(marker, state_path)
+    persist_step(marker)
     return str(path), False
 
 
-def _regenerate_continuity(marker, digest, now, continuity_fn, save_continuity_fn, state_path) -> None:
+def _regenerate_continuity(
+    marker,
+    digest,
+    now,
+    load_continuity_fn,
+    continuity_fn,
+    save_continuity_fn,
+    persist_step,
+    before_step,
+) -> None:
     """Regenerate the continuity brief once (G8 generated_at stamped by ``continuity_fn``)."""
     if marker.continuity_written:
         return
-    prior = _continuity.load_continuity_text()
+    if before_step is not None:
+        before_step("continuity")
+    prior = load_continuity_fn()
     save_continuity_fn(continuity_fn(digest, prior, now=now))
     marker.continuity_written = True
-    statefile.set_unfinalized(marker, state_path)
+    persist_step(marker)
 
 
 def _default_mirror(digest: SessionDigest) -> tuple[str | None, str | None]:
@@ -264,8 +754,23 @@ def _default_mirror(digest: SessionDigest) -> tuple[str | None, str | None]:
     return active_path, notion_op
 
 
-def _mirror_canonical(digest: SessionDigest, *, mirror_fn=None) -> tuple[str | None, str | None]:
+def _mirror_canonical(
+    digest: SessionDigest,
+    *,
+    mirror_fn=None,
+    idempotency_key: str | None = None,
+    strict: bool = False,
+) -> tuple[str | None, str | None]:
     fn = mirror_fn or _default_mirror
+    if strict and mirror_fn is not None:
+        parameters = inspect.signature(fn).parameters.values()
+        accepts_key = any(
+            parameter.name == "idempotency_key" or parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+        if accepts_key:
+            return mirror_fn(digest, idempotency_key=idempotency_key)
+        return mirror_fn(digest)
     try:
         return fn(digest)
     except Exception:  # noqa: BLE001 — belt-and-suspenders; never propagate from the mirror step
@@ -315,8 +820,13 @@ def finalize_session(
     """The normal end-of-session path: begin (distill + marker) then complete."""
     now = now or _dt.datetime.now(_dt.UTC)
     marker = begin(
-        turns, session_id=session_id, started_at=started_at,
-        risk_tier_max=risk_tier_max, now=now, distill_fn=distill_fn, state_path=state_path,
+        turns,
+        session_id=session_id,
+        started_at=started_at,
+        risk_tier_max=risk_tier_max,
+        now=now,
+        distill_fn=distill_fn,
+        state_path=state_path,
     )
     return complete(marker, now=now, state_path=state_path, **complete_kwargs)
 

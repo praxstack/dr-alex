@@ -1,0 +1,21 @@
+{
+  "contract_version": "v5.1",
+  "baseline": "e0dad8a3f6e0e7016f74c6c3d53850c9a7892e7d",
+  "accepted_parent": "8ee4d65",
+  "line_cap": 2100,
+  "stop_rule": "stop at 2100 net implementation+test lines or after two no-gain candidates; never weaken evaluator",
+  "constraints": [
+    "local branch only",
+    "no merge or push",
+    "no activation",
+    "no live sink binding",
+    "synthetic data only",
+    "protected safety paths unchanged"
+  ],
+  "atoms": [
+    {"id":"03A","ticket":"issues/03a-finalization-store.md","status":"doing","depends_on":[],"evidence":[]},
+    {"id":"03B","ticket":"issues/03b-marker-free-fanout.md","status":"todo","depends_on":["03A"],"evidence":[]},
+    {"id":"03C","ticket":"issues/03c-finalization-wrapper.md","status":"todo","depends_on":["03B"],"evidence":[]},
+    {"id":"03D","ticket":"issues/03d-pwa-integration-verification.md","status":"todo","depends_on":["03C"],"evidence":[]}
+  ]
+}

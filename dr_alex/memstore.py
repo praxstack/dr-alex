@@ -110,7 +110,9 @@ class _Proc:
     stderr: bytes
 
 
-def _run(argv: list[str], *, input_bytes: bytes | None = None, timeout: int = _DEFAULT_TIMEOUT) -> _Proc:
+def _run(
+    argv: list[str], *, input_bytes: bytes | None = None, timeout: int = _DEFAULT_TIMEOUT
+) -> _Proc:
     """Run one agent-memory subprocess (memctl or its scrub). NEVER the model.
 
     Returns a small result even on failure; the only exception it lets through is a
@@ -186,10 +188,17 @@ def recall(
         return []
     argv = [
         *_launcher(),
-        "--agent", AGENT, "--client", CLIENT, "--json",
-        "recall", query or "",
-        "-k", str(max(int(k), 0)),
-        "--sensitivity-ceiling", ceiling,
+        "--agent",
+        AGENT,
+        "--client",
+        CLIENT,
+        "--json",
+        "recall",
+        query or "",
+        "-k",
+        str(max(int(k), 0)),
+        "--sensitivity-ceiling",
+        ceiling,
     ]
     if tag:
         argv += ["--filter", f"tag={tag}"]
@@ -254,6 +263,7 @@ def remember(
     sensitivity: str = "high",
     importance: int | None = None,
     memtype: str = "user",
+    idempotency_key: str | None = None,
     timeout: int = _DEFAULT_TIMEOUT,
 ) -> WriteResult:
     """Write ONE durable clinical fact via ``memctl remember`` (one fact per memory).
@@ -266,13 +276,23 @@ def remember(
     tag_csv = ",".join(tags or ["therapy"])
     argv = [
         *_launcher(),
-        "--agent", AGENT, "--client", CLIENT, "--json",
+        "--agent",
+        AGENT,
+        "--client",
+        CLIENT,
+        "--json",
         "remember",
-        "--type", memtype,
-        "--tags", tag_csv,
-        "--sensitivity", sensitivity,
-        "--importance", str(_clamp_importance(importance)),
+        "--type",
+        memtype,
+        "--tags",
+        tag_csv,
+        "--sensitivity",
+        sensitivity,
+        "--importance",
+        str(_clamp_importance(importance)),
     ]
+    if idempotency_key:
+        argv.extend(("--idempotency-key", idempotency_key))
     try:
         proc = _run(argv, input_bytes=body.encode("utf-8"), timeout=timeout)
     except (OSError, subprocess.SubprocessError) as exc:
@@ -297,13 +317,23 @@ def supersede(
     tag_csv = ",".join(tags or ["therapy"])
     argv = [
         *_launcher(),
-        "--agent", AGENT, "--client", CLIENT, "--json",
-        "supersede", target,
-        "--reason", reason,
-        "--type", memtype,
-        "--tags", tag_csv,
-        "--sensitivity", sensitivity,
-        "--importance", str(_clamp_importance(importance)),
+        "--agent",
+        AGENT,
+        "--client",
+        CLIENT,
+        "--json",
+        "supersede",
+        target,
+        "--reason",
+        reason,
+        "--type",
+        memtype,
+        "--tags",
+        tag_csv,
+        "--sensitivity",
+        sensitivity,
+        "--importance",
+        str(_clamp_importance(importance)),
     ]
     try:
         proc = _run(argv, input_bytes=body.encode("utf-8"), timeout=timeout)

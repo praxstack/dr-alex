@@ -355,6 +355,7 @@ def test_d1_i04_ended_session_is_not_reopened(client, endpoint, payload) -> None
     assert _post(client, "/session/end", token, {"session_id": "ended-session"}).status_code == 200
     owner = statedb.get_session_owner("ended-session")
     assert owner is not None and owner.ended_at is not None
+    assert "ended-session" not in alexd._sessions
     response = _post(client, endpoint, token, payload)
     assert response.status_code == 404
     assert response.json()["detail"] == "session_not_found"
@@ -402,6 +403,32 @@ def test_d1_i04_session_id_cannot_smuggle_plaintext(client) -> None:
             path=path,
         )
     assert marker.encode() not in path.read_bytes()
+
+
+def test_body_shaped_identifier_canaries_never_reach_plaintext_columns(client, monkeypatch) -> None:
+    _enable_consent(monkeypatch)
+    session_marker = "SYNTHETIC_CLINICAL_BODY_IN_SESSION_ID"
+    copy_marker = "SYNTHETIC_CLINICAL_BODY_IN_COPY_VERSION"
+    token = _pair_token(client)
+
+    session_response = _post(
+        client,
+        "/session/start",
+        token,
+        {"session_id": session_marker},
+    )
+    consent = _consent(transcript_retention="granted")
+    consent["copy_version"] = copy_marker
+    consent_response = _post(client, "/session/start", token, {"consent": consent})
+
+    assert session_response.status_code == 422
+    assert session_response.json()["detail"] == "invalid_session_id"
+    assert consent_response.status_code == 422
+    assert consent_response.json()["detail"] == "invalid_consent_metadata"
+    statedb.init_db()
+    raw = statedb.state_db_path().read_bytes()
+    assert session_marker.encode() not in raw
+    assert copy_marker.encode() not in raw
 
 
 def test_d1_i04_policy_store_failure_denies_session_access(client, monkeypatch) -> None:
@@ -652,6 +679,180 @@ def test_d1_t07_end_rechecks_deny_before_draining_pending_fragment(client, monke
     response = _post(client, "/session/end", token, {"session_id": session_id})
     assert response.status_code == 200
     assert statedb.load_transcript(session_id) == []
+
+
+def test_rc4_r01_expired_consent_is_rechecked_before_end_drain(client, monkeypatch, caplog) -> None:
+    _enable_consent(monkeypatch)
+    _fake_model(monkeypatch, "synthetic reply")
+    before_expiry = dt.datetime(2026, 8, 23, 12, 0, tzinfo=dt.UTC)
+    after_expiry = before_expiry + dt.timedelta(seconds=2)
+    expired = False
+    resolve_consent = statedb.resolve_consent
+
+    def resolve(subject_id, source, **kwargs):
+        return resolve_consent(
+            subject_id,
+            source,
+            now=after_expiry if expired else before_expiry,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(statedb, "resolve_consent", resolve)
+    token = _pair_token(client)
+    consent = _consent(
+        transcript_retention="granted",
+        durable_memory="granted",
+    )
+    consent.update(
+        effective_at="2026-08-23T11:59:00Z",
+        expires_at="2026-08-23T12:00:01Z",
+    )
+    session_id = _post(
+        client,
+        "/session/start",
+        token,
+        {"consent": consent},
+    ).json()["session_id"]
+    _post(
+        client,
+        "/turn",
+        token,
+        {"session_id": session_id, "text": "synthetic pending fragment", "fragment": True},
+    )
+    expired = True
+
+    with caplog.at_level(logging.INFO, logger="dr_alex.trace"):
+        response = _post(client, "/session/end", token, {"session_id": session_id})
+
+    assert response.status_code == 200
+    assert response.json()["finalization"]["status"] == "closed_transient"
+    assert statedb.load_transcript(session_id) == []
+    assert "event=transcript_retention source=pwa status=skipped skipped_count=2" in caplog.text
+
+
+def test_section16_denial_logs_are_body_free(client, caplog) -> None:
+    owner_token = _pair_token(client)
+    other_token = _pair_token(client)
+    session_id = _post(client, "/session/start", owner_token, {}).json()["session_id"]
+    owner = statedb.get_session_owner(session_id)
+    assert owner is not None
+
+    with caplog.at_level(logging.INFO, logger="dr_alex.alexd"):
+        mismatch = _post(client, "/session/end", other_token, {"session_id": session_id})
+        denied = client.post(
+            "/session/end",
+            json={"session_id": session_id},
+            headers={alexd.DEVICE_HEADER: "synthetic-invalid-device-token"},
+        )
+
+    assert mismatch.status_code == 404
+    assert denied.status_code == 401
+    assert "event=owner_mismatch source=pwa count=1" in caplog.text
+    assert "event=authorization_denial source=pwa count=1" in caplog.text
+    assert session_id not in caplog.text
+    assert owner.subject_id not in caplog.text
+    assert owner.actor_principal not in caplog.text
+    assert owner_token not in caplog.text
+    assert other_token not in caplog.text
+
+
+def test_retention_withdrawal_during_model_call_blocks_transcript_persistence(
+    client, monkeypatch
+) -> None:
+    _enable_consent(monkeypatch)
+    model_started = threading.Event()
+    release_model = threading.Event()
+
+    def blocking_model(messages, tier, **kwargs):
+        model_started.set()
+        assert release_model.wait(timeout=5)
+        return llm.LLMResult(ok=True, text="synthetic reply", tier=tier)
+
+    monkeypatch.setattr(llm, "generate", blocking_model)
+    token = _pair_token(client)
+    start = _post(
+        client,
+        "/session/start",
+        token,
+        {"consent": _consent(transcript_retention="granted")},
+    )
+    session_id = start.json()["session_id"]
+    owner = statedb.get_session_owner(session_id)
+    assert owner is not None
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        turn = pool.submit(
+            _post,
+            client,
+            "/turn",
+            token,
+            {"session_id": session_id, "text": "synthetic in-flight body"},
+        )
+        assert model_started.wait(timeout=5)
+        statedb.record_consent(
+            subject_id=owner.subject_id,
+            actor_principal=owner.actor_principal,
+            source=owner.source,
+            consent=_consent(transcript_retention="withdrawn"),
+        )
+        release_model.set()
+        response = turn.result(timeout=5)
+
+    assert response.status_code == 200
+    assert statedb.load_transcript(session_id) == []
+    with sqlite3.connect(statedb.state_db_path()) as conn:
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM turn_traces WHERE session_id=?", (session_id,)
+            ).fetchone()[0]
+            == 1
+        )
+
+
+def test_turn_does_not_recreate_missing_live_session(client, monkeypatch) -> None:
+    _enable_consent(monkeypatch)
+    model_called = False
+
+    def model(messages, tier, **kwargs):
+        nonlocal model_called
+        model_called = True
+        return llm.LLMResult(ok=True, text="synthetic reply", tier=tier)
+
+    monkeypatch.setattr(llm, "generate", model)
+    token = _pair_token(client)
+    session_id = _post(client, "/session/start", token, {}).json()["session_id"]
+    alexd._sessions.pop(session_id)
+
+    response = _post(
+        client,
+        "/turn",
+        token,
+        {"session_id": session_id, "text": "synthetic post-restart turn"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "session_not_found"
+    assert session_id not in alexd._sessions
+    assert model_called is False
+
+
+def test_end_rejects_owner_bound_to_noncanonical_subject(client) -> None:
+    token = _pair_token(client)
+    principal = pairing.resolve_device_token(token)
+    assert principal is not None
+    session_id = "foreign-subject-session"
+    statedb.create_session_owner(
+        session_id,
+        subject_id="foreign-subject",
+        actor_principal=principal.actor_principal,
+        source="pwa",
+    )
+    alexd._sessions[session_id] = alexd.RoomSession(session_id, test_traffic=True)
+
+    response = _post(client, "/session/end", token, {"session_id": session_id})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "session_not_found"
 
 
 def test_d1_c15_corrupt_policy_store_unhealthy_when_telemetry_off(tmp_path, monkeypatch) -> None:

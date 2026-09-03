@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc 3.10.2" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Dr. Alex Memory Architecture v5 Run Contract</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: 1.5em;}
+    div.column{flex: auto;}
+    @media screen {
+    div.columns{gap: min(4vw, 1.5em);}
+    div.column{overflow-x: auto;}
+    }
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+  <link rel="stylesheet" href="spec.css" />
+</head>
+<body>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#dr.-alex-memory-architecture-v5-run-contract"
+id="toc-dr.-alex-memory-architecture-v5-run-contract">Dr. Alex Memory
+Architecture v5 Run Contract</a>
+<ul>
+<li><a href="#product-identity" id="toc-product-identity">1. Product
+identity</a>
+<ul>
+<li><a href="#objective" id="toc-objective">Objective</a></li>
+<li><a href="#full-program-success-definition"
+id="toc-full-program-success-definition">Full-program success
+definition</a></li>
+<li><a href="#accepted-increment-for-this-run"
+id="toc-accepted-increment-for-this-run">Accepted increment for this
+run</a></li>
+</ul></li>
+<li><a href="#immutable-governing-baseline"
+id="toc-immutable-governing-baseline">2. Immutable governing
+baseline</a>
+<ul>
+<li><a href="#human-approved-content-free-evidence"
+id="toc-human-approved-content-free-evidence">Human-approved
+content-free evidence</a></li>
+<li><a href="#frozen-evaluator" id="toc-frozen-evaluator">Frozen
+evaluator</a></li>
+<li><a href="#repository-baselines"
+id="toc-repository-baselines">Repository baselines</a></li>
+<li><a href="#restricted-historical-sources"
+id="toc-restricted-historical-sources">Restricted historical
+sources</a></li>
+<li><a href="#review-evidence" id="toc-review-evidence">Review
+evidence</a></li>
+</ul></li>
+<li><a href="#candidate-baseline-and-comparison-rule"
+id="toc-candidate-baseline-and-comparison-rule">3. Candidate baseline
+and comparison rule</a>
+<ul>
+<li><a href="#one-authorized-document-repair"
+id="toc-one-authorized-document-repair">One authorized document
+repair</a></li>
+</ul></li>
+<li><a href="#protected-controls-and-paths"
+id="toc-protected-controls-and-paths">4. Protected controls and
+paths</a></li>
+<li><a href="#permitted-mutable-paths"
+id="toc-permitted-mutable-paths">5. Permitted mutable paths</a>
+<ul>
+<li><a href="#dr.-alex-worktree" id="toc-dr.-alex-worktree">Dr. Alex
+worktree</a></li>
+<li><a href="#agent-memory-worktree"
+id="toc-agent-memory-worktree">agent-memory worktree</a></li>
+<li><a href="#hermes-and-therapy-stack"
+id="toc-hermes-and-therapy-stack">Hermes and therapy-stack</a></li>
+</ul></li>
+<li><a href="#frozen-evaluator-and-thresholds"
+id="toc-frozen-evaluator-and-thresholds">6. Frozen evaluator and
+thresholds</a></li>
+<li><a href="#budgets-and-stop-rule" id="toc-budgets-and-stop-rule">7.
+Budgets and stop rule</a></li>
+<li><a href="#commit-and-activation-boundary"
+id="toc-commit-and-activation-boundary">8. Commit and activation
+boundary</a></li>
+<li><a href="#rollback-pointers" id="toc-rollback-pointers">9. Rollback
+pointers</a></li>
+<li><a href="#first-tracer-bullet" id="toc-first-tracer-bullet">10.
+First tracer bullet</a></li>
+<li><a href="#current-run-definition-of-done"
+id="toc-current-run-definition-of-done">11. Current run definition of
+done</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="dr.-alex-memory-architecture-v5-run-contract">Dr. Alex Memory
+Architecture v5 Run Contract</h1>
+<p><strong>Frozen at:</strong> 2026-08-23T16:17:23Z<br />
+<strong>Run class:</strong> LARGE, multi-repository,
+identity-preserving<br />
+<strong>Status:</strong> Governing baseline frozen; implementation
+blocked until exact-hash candidate PASS<br />
+<strong>Supersedes:</strong> rejected v4 contract preserved as
+<code>RUN-CONTRACT-v4-rejected-20260823.md</code><br />
+<strong>Authorization:</strong> The user explicitly authorized fixing
+the remaining wording and continuing through implementation. V5 carries
+that approval forward for the four confirmed v4 review leftovers
+only.</p>
+<h2 id="product-identity">1. Product identity</h2>
+<h3 id="objective">Objective</h3>
+<p>Build the minimum existing-platform increment that establishes
+consent-governed, identity-bound, auditable Dr. Alex memory lifecycle
+primitives without claiming or activating universal cross-surface
+continuity.</p>
+<h3 id="full-program-success-definition">Full-program success
+definition</h3>
+<p>The full product program is complete only after later human-gated
+stages prove:</p>
+<ol type="1">
+<li>Every supported retained conversation reaches one idempotent
+lifecycle.</li>
+<li>Raw transcripts, derived memory, and prompt context remain
+distinct.</li>
+<li>Clinical storage is physically isolated, separately encrypted,
+authenticated, and unavailable to non-therapy clients outside an
+approved API.</li>
+<li>Current-turn crisis triage remains independent of memory and
+preserves every existing safety invariant.</li>
+<li>Recall excludes stale, unauthorized, deleted, invalid, and
+context-inapplicable memories.</li>
+<li>User inspect, correct, forget, export, and reset operations are
+enforceable.</li>
+<li>Deletion propagates through canonical storage, indexes, WAL, caches,
+backups, and restore manifests.</li>
+<li>The encrypted standalone PWA remains available until replacement
+parity is proven.</li>
+</ol>
+<h3 id="accepted-increment-for-this-run">Accepted increment for this
+run</h3>
+<p>This run may deliver only:</p>
+<ul>
+<li>always-on paired-device ownership for PWA sessions;</li>
+<li>default-off, explicit consent receipts and transcript policy;</li>
+<li>encrypted migration of the existing TUI marker digest;</li>
+<li>encrypted per-session synthetic PWA operation records;</li>
+<li>one marker-free completion seam shared by legacy and synthetic
+paths;</li>
+<li>no new live PWA durable sink;</li>
+<li>removal of request fields as authority for high-sensitivity recall
+snippets and full-body reads;</li>
+<li>synthetic tests, local documentation, and bounded local
+commits.</li>
+</ul>
+<p>This increment is not product completion, physical clinical
+isolation, deletion completion, Hermes integration, or activation.</p>
+<h2 id="immutable-governing-baseline">2. Immutable governing
+baseline</h2>
+<h3 id="human-approved-content-free-evidence">Human-approved
+content-free evidence</h3>
+<ul>
+<li><code>GOVERNING-EVIDENCE-v3.md</code></li>
+<li>SHA-256:
+<code>ee2a8370ad9024bdb416d1660753d0d6f4623ef3ae7ebfab42c26f9f2a2f4296</code></li>
+</ul>
+<h3 id="frozen-evaluator">Frozen evaluator</h3>
+<ul>
+<li><code>EVALUATOR-v3.md</code></li>
+<li>SHA-256:
+<code>e53fd42c28c609c8f36684df6d39a7932bf97b9f40b6bb911227303eccecd710</code></li>
+<li>Contains 63 unique synthetic outcomes plus full-suite and
+protected-control gates.</li>
+</ul>
+<h3 id="repository-baselines">Repository baselines</h3>
+<ul>
+<li>Dr. Alex: <code>e0dad8a3f6e0e7016f74c6c3d53850c9a7892e7d</code></li>
+<li>agent-memory:
+<code>a01bc4cb9697aaeff69671d82ea2dbca1f32cd38</code></li>
+<li>Hermes: <code>d5281f59819d2ea2ce6754faec2ce317c92366c8</code>,
+reference only</li>
+<li>therapy-stack:
+<code>9ce6054195366eb57b414ecd51b087487cdd22c5</code>, historical
+reference only</li>
+</ul>
+<h3 id="restricted-historical-sources">Restricted historical
+sources</h3>
+<p>The original narrative reports remain preserved in place as
+restricted clinical references. They are not governing inputs for v5.
+They must not be copied, quoted, committed, published, or sent to
+external reviewers.</p>
+<h3 id="review-evidence">Review evidence</h3>
+<p>Review receipts remain outside candidate hashes:</p>
+<ul>
+<li><code>reviews/codex-review.md</code></li>
+<li><code>reviews/grok-review.md</code></li>
+<li><code>reviews/plan-and-council-synthesis.md</code></li>
+<li><code>REVIEW-FINDINGS.md</code></li>
+<li><code>verification-receipt.md</code></li>
+</ul>
+<h2 id="candidate-baseline-and-comparison-rule">3. Candidate baseline
+and comparison rule</h2>
+<p>The initial v5 baseline is the rejected v4 candidate:</p>
+<ul>
+<li><code>ARCHITECTURE.md</code>:
+<code>15925fc24590bff42ec7bcdbd564e2af4ff337dc952b8c7869a4465e668b7a39</code></li>
+<li><code>CHANGE-SPEC.md</code>:
+<code>8c496f8af5c626deed5cedecf4eea5cbe40a6267ab026d2a63a92b18574ee5e9</code></li>
+</ul>
+<p>Every later candidate must be compared with:</p>
+<ol type="1">
+<li>the repository baselines;</li>
+<li>this initial v4 baseline;</li>
+<li>the current accepted candidate.</li>
+</ol>
+<p>A candidate may change architecture, change spec, code, and tests
+only within permitted paths. It may not change this contract, the
+governing evidence, evaluator, thresholds, protected controls, or
+evidence policy.</p>
+<p>Candidate acceptance requires strict held-out improvement on the
+target behavior with no protected regression. Edited evaluator outcomes
+are not acceptance evidence.</p>
+<h3 id="one-authorized-document-repair">One authorized document
+repair</h3>
+<p>V5 authorizes one candidate that may only:</p>
+<ol type="1">
+<li>replace stale <code>v2</code> and <code>v3</code> stage, subject,
+and definition-of-done labels with <code>v5</code>;</li>
+<li>state in architecture that every body-free terminal operation has
+null lease owner and expiry;</li>
+<li>make additive regression <code>RC4-R03</code> assert both null
+payload and null lease fields;</li>
+<li>restate that legacy pending-fragment drain applies only to a live
+session.</li>
+</ol>
+<p>No other architecture, evaluator, scope, product, or activation
+change is allowed in the document-repair candidate.</p>
+<h2 id="protected-controls-and-paths">4. Protected controls and
+paths</h2>
+<p>The following cannot change in this run:</p>
+<ul>
+<li><code>RUN-CONTRACT.md</code>,
+<code>RUN-CONTRACT-v3-stopped-20260823.md</code>,
+<code>RUN-CONTRACT-v4-rejected-20260823.md</code>,
+<code>GOVERNING-EVIDENCE-v3.md</code>, and <code>EVALUATOR-v3.md</code>
+after this freeze;</li>
+<li><code>/Users/prax/Developer/agent-stack/policies/identity-preservation.md</code>;</li>
+<li>restricted reports, private conversation content, clinical archives,
+therapist <code>state.db</code>, clinical source records, and backup
+archives;</li>
+<li>therapist <code>SOUL.md</code>, <code>USER.md</code>,
+<code>MEMORY.md</code>, <code>.env</code>, <code>config.yaml</code>,
+gateway state, Telegram routing, and cron activation;</li>
+<li>Dr. Alex triage-first ordering, RED short-circuit, single LLM entry
+point, golden RED-recall, frozen sections, deterministic output gates,
+encryption-at-rest, and loopback-only controls;</li>
+<li>agent-memory canonical authority, single-writer flock, supersede,
+quarantine, archive-by-default except where a later human-approved
+erasure contract overrides it, fail-loud index state, and BM25 without
+optional services;</li>
+<li>unrelated dirty files in original Dr. Alex, agent-memory,
+therapy-stack, and Hermes worktrees.</li>
+</ul>
+<p>Tests may extend coverage but cannot weaken frozen outcomes or
+rewrite expected behavior to make a candidate pass.</p>
+<h2 id="permitted-mutable-paths">5. Permitted mutable paths</h2>
+<p>Only clean isolated feature worktrees may change.</p>
+<h3 id="dr.-alex-worktree">Dr. Alex worktree</h3>
+<p><code>/Users/prax/Development/Hermes-Projects/dr-alex-memory-architecture-v1</code></p>
+<p>Allowed:</p>
+<ul>
+<li>architecture, change-spec, ticket, review, and receipt documents
+other than the frozen v3 governing files;</li>
+<li>local consent and paired-device session ownership;</li>
+<li>transcript policy at the existing shared turn seam;</li>
+<li>encryption migration for the legacy TUI marker digest;</li>
+<li>encrypted per-session synthetic finalization operations in existing
+<code>state.db</code>;</li>
+<li>marker-free completion extraction shared by legacy and synthetic
+paths;</li>
+<li>default-off PWA lifecycle wrapper with synthetic sinks only;</li>
+<li>focused synthetic tests and body-free telemetry.</li>
+</ul>
+<p>Prohibited:</p>
+<ul>
+<li>safety-triage or crisis-content changes;</li>
+<li>a new live PWA durable write;</li>
+<li>new Notion, Active File, inbox, continuity, canonical-memory,
+backup, or network output;</li>
+<li>live state, clinical records, corpus, secrets, or activation.</li>
+</ul>
+<h3 id="agent-memory-worktree">agent-memory worktree</h3>
+<p>Use a separate clean worktree from
+<code>a01bc4cb9697aaeff69671d82ea2dbca1f32cd38</code>.</p>
+<p>Allowed:</p>
+<ul>
+<li>removal of <code>include_sensitive</code> as an authorization
+mechanism for recall and full-body fetch;</li>
+<li>same-descriptor metadata-first authorization for full-body
+fetch;</li>
+<li>focused synthetic authorization tests;</li>
+<li>local OpenSpec and threat-model notes.</li>
+</ul>
+<p>Prohibited:</p>
+<ul>
+<li>clinical-root, key, OS identity, service, socket, daemon, or
+live-policy creation;</li>
+<li>claims of physical clinical isolation;</li>
+<li>moving, decrypting, importing, deleting, or rewriting memory
+content;</li>
+<li>repair of operational doctor defects unless separately
+approved.</li>
+</ul>
+<h3 id="hermes-and-therapy-stack">Hermes and therapy-stack</h3>
+<p>No source, profile, configuration, data, or service edit is allowed.
+Both are read-only references.</p>
+<h2 id="frozen-evaluator-and-thresholds">6. Frozen evaluator and
+thresholds</h2>
+<p>Acceptance evidence is fixed in <code>EVALUATOR-v3.md</code>:</p>
+<ul>
+<li>all 63 named synthetic outcomes pass;</li>
+<li>both full repository suites pass;</li>
+<li>no protected control regresses;</li>
+<li>no private clinical content appears in fixtures, logs, tickets,
+reports, or review prompts;</li>
+<li>independent standards and spec reviews report zero blocker and zero
+major defect;</li>
+<li><code>memctl doctor</code> exit 7 remains a carried baseline defect
+unless a separately approved run repairs it;</li>
+<li>the v4 baseline and every later candidate remain inside the diff and
+commit budgets.</li>
+</ul>
+<p>The candidate cannot modify <code>EVALUATOR-v3.md</code>, its
+expected outcomes, or these thresholds.</p>
+<h2 id="budgets-and-stop-rule">7. Budgets and stop rule</h2>
+<ul>
+<li>Maximum implementation commits: <code>8</code> across
+repositories.</li>
+<li>Planned implementation commits: <code>6</code>.</li>
+<li>Maximum document-repair candidates before implementation:
+<code>1</code>.</li>
+<li>Maximum independent review/fix rounds per implementation slice:
+<code>5</code>.</li>
+<li>Maximum implementation and test diff: <code>1500</code> net changed
+lines per repository relative to the repository baseline; governing,
+review, receipt, and generated HTML files are excluded from this
+implementation budget.</li>
+<li>Maximum parallel external reviewers per gate: <code>6</code>.</li>
+<li>Maximum new external reviewer invocations after this freeze:
+<code>12</code>.</li>
+<li>Maximum active implementation elapsed time:
+<code>12 hours</code>.</li>
+<li>Cost budget: no new paid service, subscription, credential, or
+provider spend; use already configured tools only.</li>
+<li>Stop the document phase immediately if the one authorized repair
+candidate does not receive exact-hash PASS with zero blocker and zero
+major finding.</li>
+<li>After document PASS, stop an implementation slice at the first hard
+budget limit or after <code>2</code> consecutive code candidates produce
+no held-out improvement.</li>
+<li>Do not weaken a gate, change a holdout, broaden done, or extend a
+budget to hide a stall.</li>
+</ul>
+<p>Document-only governing-version work before this freeze does not
+count as implementation commits.</p>
+<h2 id="commit-and-activation-boundary">8. Commit and activation
+boundary</h2>
+<p>This run authorizes isolated feature branches and verified local
+commits. It does not authorize:</p>
+<ul>
+<li>merge to <code>main</code>;</li>
+<li>public push or pull request;</li>
+<li>therapist gateway restart or configuration;</li>
+<li>live Hermes hook or plugin;</li>
+<li>real clinical data migration, copy, decryption, deletion, purge, or
+export;</li>
+<li>Telegram, backup, credential, retention, OS-user, service, socket,
+key, or clinical-policy changes;</li>
+<li>live PWA durable finalization.</li>
+</ul>
+<p>Those operations retain separate human gates.</p>
+<h2 id="rollback-pointers">9. Rollback pointers</h2>
+<ul>
+<li>Dr. Alex code rollback:
+<code>git reset --hard e0dad8a3f6e0e7016f74c6c3d53850c9a7892e7d</code>
+in the isolated worktree.</li>
+<li>agent-memory code rollback:
+<code>git reset --hard a01bc4cb9697aaeff69671d82ea2dbca1f32cd38</code>
+in its isolated worktree.</li>
+<li>Governing-contract rollback:
+<code>RUN-CONTRACT-v4-rejected-20260823.md</code>, SHA-256
+<code>26feada532ba19977c72ba3b9de51b6f8b8848ab23784c1ec320e7b6fd25e59e</code>.</li>
+<li>Never run rollback commands in original dirty worktrees.</li>
+</ul>
+<h2 id="first-tracer-bullet">10. First tracer bullet</h2>
+<p>The first implementation slice is test-first and makes one
+intentional default security change: PWA session ownership becomes
+device-bound. Consent enforcement and PWA durable finalization remain
+default-off. Existing TUI sink behavior remains unchanged; only its
+marker digest becomes ciphertext.</p>
+<p>The slice must:</p>
+<ol type="1">
+<li>resolve one stable local subject and verified paired-device
+actor;</li>
+<li>always bind PWA start, turn, check-in, and end to the owner;</li>
+<li>persist explicit default-deny consent receipts outside the telemetry
+kill-switch;</li>
+<li>suppress transcript rows under explicit <code>deny</code> in the
+isolated enforcement profile;</li>
+<li>retain body-free safety telemetry where enabled;</li>
+<li>run no live PWA fan-out and touch no clinical data or live
+configuration.</li>
+</ol>
+<h2 id="current-run-definition-of-done">11. Current run definition of
+done</h2>
+<p>This run is complete only when:</p>
+<ol type="1">
+<li>the exact architecture and change-spec candidate receives fresh
+independent PASS results under this content-free v5 contract and
+unchanged v3 evidence/evaluator;</li>
+<li>ordered tickets map every selected change to frozen evaluator
+IDs;</li>
+<li>every ticket has a failing test before implementation and passes
+after implementation;</li>
+<li>both full suites pass without protected regression;</li>
+<li>independent standards and spec reviews report no blocker or major
+defect;</li>
+<li>accepted commits stay within repository, diff, time, and count
+budgets;</li>
+<li>no live activation, clinical-data operation, external publication,
+or restricted-source disclosure occurred;</li>
+<li>the final report distinguishes the accepted increment from the
+incomplete full product and names the next human gate.</li>
+</ol>
+</body>
+</html>

@@ -35,6 +35,9 @@ BEHAVIOUR / REGISTER:
     DR_ALEX_CONSENT_ENFORCEMENT Truthy enables default-deny consent resolution for alexd only.
                                 Default false; does not control session ownership.
     DR_ALEX_ALLOW_TEST_CONSENT  Truthy permits synthetic ``api_test`` consent input. Default false.
+    DR_ALEX_PWA_DURABLE_FINALIZATION  Truthy enables encrypted PWA finalization. Default false.
+    DR_ALEX_RECOVERY_TIMEOUT_SECONDS  Finalization lease seconds, bounded to 1..30. Default 5.
+    DR_ALEX_MEMORY_POLICY_VERSION  Finalization receipt and sink-ID policy version. Default 3.0.0.
 
 MODEL / BINARY:
     DR_ALEX_MODEL       Override the Claude model id used for turns + recorded as
@@ -155,6 +158,27 @@ def consent_enforcement_enabled() -> bool:
 
 def allow_test_consent() -> bool:
     return _env_bool("DR_ALEX_ALLOW_TEST_CONSENT")
+
+
+def pwa_durable_finalization_enabled() -> bool:
+    return _env_bool("DR_ALEX_PWA_DURABLE_FINALIZATION")
+
+
+def recovery_timeout_seconds() -> int:
+    raw = os.environ.get("DR_ALEX_RECOVERY_TIMEOUT_SECONDS", "5").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 5
+    return max(1, min(30, value))
+
+
+def memory_policy_version() -> str:
+    raw = os.environ.get("DR_ALEX_MEMORY_POLICY_VERSION", "3.0.0").strip()
+    parts = raw.split(".")
+    if len(raw) <= 32 and len(parts) == 3 and all(part.isdigit() for part in parts):
+        return raw
+    return "3.0.0"
 
 
 # ---------------------------------------------------------------------------

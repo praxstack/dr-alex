@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc 3.10.2" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Dr. Alex Memory Architecture v3 Stall Report</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: 1.5em;}
+    div.column{flex: auto;}
+    @media screen {
+    div.columns{gap: min(4vw, 1.5em);}
+    div.column{overflow-x: auto;}
+    }
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+  <link rel="stylesheet" href="spec.css" />
+</head>
+<body>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#dr.-alex-memory-architecture-v3-stall-report"
+id="toc-dr.-alex-memory-architecture-v3-stall-report">Dr. Alex Memory
+Architecture v3 Stall Report</a>
+<ul>
+<li><a href="#identity" id="toc-identity">1. Identity</a></li>
+<li><a href="#frozen-v3-boundary" id="toc-frozen-v3-boundary">2. Frozen
+v3 boundary</a></li>
+<li><a href="#candidate-results" id="toc-candidate-results">3. Candidate
+results</a></li>
+<li><a href="#rc4-material-failure" id="toc-rc4-material-failure">4. RC4
+material failure</a></li>
+<li><a href="#additional-unresolved-wording-defects"
+id="toc-additional-unresolved-wording-defects">5. Additional unresolved
+wording defects</a></li>
+<li><a href="#stop-rule-application" id="toc-stop-rule-application">6.
+Stop-rule application</a></li>
+<li><a href="#product-method-and-library-state"
+id="toc-product-method-and-library-state">7. Product, method, and
+library state</a></li>
+<li><a href="#rollback-and-preserved-evidence"
+id="toc-rollback-and-preserved-evidence">8. Rollback and preserved
+evidence</a></li>
+<li><a href="#current-proof" id="toc-current-proof">9. Current
+proof</a></li>
+<li><a href="#human-gate-for-any-continuation"
+id="toc-human-gate-for-any-continuation">10. Human gate for any
+continuation</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="dr.-alex-memory-architecture-v3-stall-report">Dr. Alex Memory
+Architecture v3 Stall Report</h1>
+<p><strong>Status:</strong> V3 stopped by the frozen two-no-gain
+rule<br />
+<strong>Date:</strong> 2026-08-23<br />
+<strong>Product state:</strong> No application implementation
+started<br />
+<strong>Activation state:</strong> Unchanged and prohibited</p>
+<h2 id="identity">1. Identity</h2>
+<p>The objective was to establish an implementable, independently
+verified architecture for consent-governed, identity-bound,
+provenance-aware, temporal Dr. Alex memory continuity, then implement
+only the default-off D1 and request-flag M1-A slices.</p>
+<p>Success required exact-hash independent PASS with zero blocker and
+zero major finding before tickets or code.</p>
+<p>Application baselines remain:</p>
+<ul>
+<li>Dr. Alex: <code>e0dad8a3f6e0e7016f74c6c3d53850c9a7892e7d</code></li>
+<li>agent-memory:
+<code>a01bc4cb9697aaeff69671d82ea2dbca1f32cd38</code></li>
+</ul>
+<h2 id="frozen-v3-boundary">2. Frozen v3 boundary</h2>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>Artifact</th>
+<th>SHA-256</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>RUN-CONTRACT.md</code></td>
+<td><code>2b6ee3db3bf29b3550869a8b2b83130932b8606b8bf1a240cbd683ccce53fc62</code></td>
+</tr>
+<tr>
+<td><code>GOVERNING-EVIDENCE-v3.md</code></td>
+<td><code>ee2a8370ad9024bdb416d1660753d0d6f4623ef3ae7ebfab42c26f9f2a2f4296</code></td>
+</tr>
+<tr>
+<td><code>EVALUATOR-v3.md</code></td>
+<td><code>e53fd42c28c609c8f36684df6d39a7932bf97b9f40b6bb911227303eccecd710</code></td>
+</tr>
+</tbody>
+</table>
+<p>The restricted narrative reports remained non-governing and were not
+shared with the v3 reviewers.</p>
+<h2 id="candidate-results">3. Candidate results</h2>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+<col style="width: 25%" />
+</colgroup>
+<thead>
+<tr>
+<th>Candidate</th>
+<th>Exact hashes</th>
+<th>Independent result</th>
+<th>Disposition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RC3</td>
+<td>Architecture <code>21d2b8ad…ddf5</code>; spec
+<code>76ef8820…35f</code></td>
+<td>Codex FAIL; Grok FAIL</td>
+<td>Rejected</td>
+</tr>
+<tr>
+<td>RC4</td>
+<td>Architecture <code>dee6e991…a7e3</code>; spec
+<code>29f65682…14e7</code></td>
+<td>Codex FAIL; Grok FAIL</td>
+<td>Rejected and retained as evidence</td>
+</tr>
+</tbody>
+</table>
+<p>All 63 frozen evaluator outcomes remained byte-identical. RC4 added
+eight candidate regressions without changing the evaluator.</p>
+<h2 id="rc4-material-failure">4. RC4 material failure</h2>
+<p>RC4 still contains incompatible consent and lease ordering:</p>
+<ol type="1">
+<li>Architecture requires current consent to be resolved before a resume
+claim.</li>
+<li>Change-spec algorithm claims the operation lease first and resolves
+current consent afterward.</li>
+<li>The architecture does not require current-consent re-resolution
+before every sink step, while the change spec does.</li>
+</ol>
+<p>This leaves multiple conforming implementations for withdrawal during
+recovery and fails the zero-major threshold.</p>
+<h2 id="additional-unresolved-wording-defects">5. Additional unresolved
+wording defects</h2>
+<p>A future human-approved run would need to address all of these
+without changing the v3 evidence or 63-outcome evaluator:</p>
+<ul>
+<li>rename the architecture title from v2 to v3;</li>
+<li>gate pending-fragment drain explicitly to a live session;</li>
+<li>state one authoritative diff-budget comparison point and exclusion
+rule;</li>
+<li>explicitly clear lease fields on writer-disabled terminal
+creation;</li>
+<li>replace Turn wording that says End uses the cached policy with
+current-consent re-resolution;</li>
+<li>place consent resolution before compare-and-swap claim, then require
+re-resolution and fencing before every sink step.</li>
+</ul>
+<h2 id="stop-rule-application">6. Stop-rule application</h2>
+<p>The frozen v3 rule requires a stop after two consecutive candidates
+without held-out improvement. RC3 and RC4 both received material
+exact-hash FAIL verdicts. No RC5 is authorized in v3.</p>
+<p>This report records the stall instead of weakening the threshold,
+editing the evaluator, expanding the review budget, or starting
+implementation against an unapproved spec.</p>
+<h2 id="product-method-and-library-state">7. Product, method, and
+library state</h2>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>Class</th>
+<th>State</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Product</td>
+<td>No application source change; no live continuity improvement
+shipped</td>
+</tr>
+<tr>
+<td>Method</td>
+<td>Content-free v3 governance, 63-outcome evaluator, review ledger, and
+exact-hash receipts exist</td>
+</tr>
+<tr>
+<td>Library</td>
+<td>Restricted reports remain preserved but non-governing</td>
+</tr>
+</tbody>
+</table>
+<p>Method work is not reported as product progress.</p>
+<h2 id="rollback-and-preserved-evidence">8. Rollback and preserved
+evidence</h2>
+<ul>
+<li>Application rollback: unchanged baseline commits above.</li>
+<li>Prior governing rollback: <code>RUN-CONTRACT-v2.md</code> hash
+<code>a8ec61fac2cf36e185d6e643138953a9ab55b5b836281cdc7f3f7c67fd35f091</code>.</li>
+<li>Active v3 governing baseline remains frozen at the hashes in section
+2.</li>
+<li>Rejected RC4 remains in <code>ARCHITECTURE.md</code> and
+<code>CHANGE-SPEC.md</code> for audit.</li>
+<li>Separately named <code>*-v3</code> and <code>TICKETS-v3.md</code>
+artifacts with different hashes are unreviewed concurrent artifacts and
+are not accepted, published, or used for implementation.</li>
+</ul>
+<h2 id="current-proof">9. Current proof</h2>
+<ul>
+<li>No application source file changed in this run.</li>
+<li>No Hermes configuration, therapist profile, Telegram route, clinical
+record, memory service, or live sink was changed or activated.</li>
+<li><code>memctl doctor</code> remains exit 7.</li>
+<li>Ticket publication, implementation, review loops, and commits are
+not started.</li>
+</ul>
+<h2 id="human-gate-for-any-continuation">10. Human gate for any
+continuation</h2>
+<p>Continuation requires an explicit human-approved new run version.
+That approval must state whether the new run may make one bounded
+wording-repair candidate while preserving the v3 evidence, evaluator,
+thresholds, protected paths, application baselines, and activation
+prohibitions.</p>
+</body>
+</html>

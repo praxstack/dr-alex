@@ -1,0 +1,79 @@
+{
+  "program": "dr-alex-memory-architecture-v3",
+  "baseline": "e0dad8a3f6e0e7016f74c6c3d53850c9a7892e7d",
+  "governing_contract": "docs/architecture/dr-alex-memory-architecture-v1/RUN-CONTRACT.md",
+  "rollback_contract": "docs/architecture/dr-alex-memory-architecture-v1/RUN-CONTRACT-v2.md",
+  "status_values": ["todo", "doing", "done", "parked"],
+  "atoms": [
+    {
+      "id": "A0",
+      "title": "Freeze v3 content-free run identity",
+      "criterion": "Before code implementation, v3 SHALL pin human-approved content-free evidence, repository baselines, protected paths, the 63-outcome synthetic evaluator, budgets, stop rule, and rollback artifacts.",
+      "status": "done",
+      "evidence": "RUN-CONTRACT.md; GOVERNING-EVIDENCE-v3.md; EVALUATOR-v3.md; RUN-CONTRACT-v2.md; verification-receipt.md"
+    },
+    {
+      "id": "A1",
+      "title": "Verify current architecture",
+      "criterion": "Every decision-critical current-state claim SHALL be confirmed against current source or labeled unverified without copying private content.",
+      "status": "done",
+      "evidence": "CURRENT-STATE-VERIFICATION.md; reviews/codex-review.md; reviews/grok-review.md"
+    },
+    {
+      "id": "A2",
+      "title": "Publish v3-reviewed architecture and change spec",
+      "criterion": "The exact paired Markdown and HTML candidate SHALL conform to v3 governing evidence, pass all frozen synthetic requirements on paper, and receive fresh independent PASS results before tickets.",
+      "status": "doing",
+      "evidence": "ARCHITECTURE.md; CHANGE-SPEC.md"
+    },
+    {
+      "id": "A3",
+      "title": "Reconcile independent plan reviews",
+      "criterion": "Codex, Grok, MoA, council, CEO, engineering, design, and DevEx findings SHALL be fixed, cut, or explicitly parked without weakening gates.",
+      "status": "done",
+      "evidence": "reviews/; REVIEW-FINDINGS.md; reviews/plan-and-council-synthesis.md; delegation deleg_9f2d0cc5"
+    },
+    {
+      "id": "A4",
+      "title": "Publish tracer-bullet tickets",
+      "criterion": "Each ready ticket SHALL fit one fresh context, declare blockers, map to test IDs, and avoid later human-gated work.",
+      "status": "todo",
+      "evidence": null
+    },
+    {
+      "id": "A5",
+      "title": "Implement D1 subject, device, and consent",
+      "criterion": "PWA sessions SHALL always bind to verified device actors. Under the default-off enforcement profile, durable scopes SHALL default deny from audited receipts.",
+      "status": "todo",
+      "evidence": null
+    },
+    {
+      "id": "A6",
+      "title": "Implement D1 persistence and operation receipts",
+      "criterion": "Denied retention SHALL suppress transcript bodies under enforcement, the legacy TUI marker digest SHALL be encrypted, and PWA finalization operations SHALL be per-session, idempotent, leased, and synthetic-sink-only.",
+      "status": "todo",
+      "evidence": null
+    },
+    {
+      "id": "A7",
+      "title": "Implement M1-A request-flag hardening",
+      "criterion": "A request flag SHALL NOT grant high-sensitivity recall snippets or a full-body read, with current approved Dr. Alex compatibility covered and no new clinical principal or root.",
+      "status": "todo",
+      "evidence": null
+    },
+    {
+      "id": "A8",
+      "title": "Review, verify, and commit bounded slices",
+      "criterion": "Every accepted slice SHALL pass focused and full suites, protected checks, two-axis review, and fresh-context conformance before an atomic local commit.",
+      "status": "todo",
+      "evidence": null
+    },
+    {
+      "id": "A9",
+      "title": "Later physical isolation, user controls, and Hermes integration",
+      "criterion": "These stages SHALL remain non-ready and unimplemented until a new human-approved governing contract defines process identity, encrypted root, deletion, backup, consent UI, and activation.",
+      "status": "parked",
+      "evidence": "RUN-CONTRACT.md sections 4 and 7; ARCHITECTURE.md section 11"
+    }
+  ]
+}

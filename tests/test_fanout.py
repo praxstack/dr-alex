@@ -7,12 +7,10 @@ from __future__ import annotations
 
 import datetime as _dt
 
-import pytest
-
 from dr_alex import fanout, memstore, statefile
 from dr_alex.digest import SessionDigest, Technique
 
-_UTC = _dt.timezone.utc
+_UTC = _dt.UTC
 
 
 def _now() -> _dt.datetime:
@@ -20,13 +18,15 @@ def _now() -> _dt.datetime:
 
 
 def _digest(**over) -> SessionDigest:
-    base = dict(
-        session_id="sess1", started_at="2026-07-18T08:00:00Z", ended_at="2026-07-18T09:00:00Z",
-        risk_tier_max="GREEN",
-        techniques=[Technique("behavioral-activation", "helped")],
-        durable_learnings=["Fact one about Prax.", "Fact two about Prax."],
-        last_topic="morning activation",
-    )
+    base = {
+        "session_id": "sess1",
+        "started_at": "2026-07-18T08:00:00Z",
+        "ended_at": "2026-07-18T09:00:00Z",
+        "risk_tier_max": "GREEN",
+        "techniques": [Technique("behavioral-activation", "helped")],
+        "durable_learnings": ["Fact one about Prax.", "Fact two about Prax."],
+        "last_topic": "morning activation",
+    }
     base.update(over)
     return SessionDigest(**base)
 
@@ -57,13 +57,17 @@ def _seams(tmp_path, remember=None, scrub=None):
         p.write_text(text, encoding="utf-8")
         return p
 
-    return dict(
-        remember_fn=remember or _Recorder(),
-        scrub_fn=scrub or (lambda doc: doc.encode("utf-8")),
-        inbox_dir_fn=lambda: str(inbox),
-        continuity_fn=lambda digest, prior, *, now: "brief text",
-        save_continuity_fn=save_continuity,
-    ), continuity_writes, inbox
+    return (
+        {
+            "remember_fn": remember or _Recorder(),
+            "scrub_fn": scrub or (lambda doc: doc.encode("utf-8")),
+            "inbox_dir_fn": lambda: str(inbox),
+            "continuity_fn": lambda digest, prior, *, now: "brief text",
+            "save_continuity_fn": save_continuity,
+        },
+        continuity_writes,
+        inbox,
+    )
 
 
 def test_normal_finalize_writes_all_channels(tmp_path) -> None:
@@ -72,8 +76,13 @@ def test_normal_finalize_writes_all_channels(tmp_path) -> None:
     seams, continuity_writes, inbox = _seams(tmp_path, remember=rec)
     res = fanout.finalize_session(
         [("user", "hi"), ("assistant", "hey")],
-        session_id="sess1", started_at="2026-07-18T08:00:00Z", risk_tier_max="GREEN",
-        now=_now(), distill_fn=lambda *a, **k: _digest(), state_path=sp, **seams,
+        session_id="sess1",
+        started_at="2026-07-18T08:00:00Z",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(),
+        state_path=sp,
+        **seams,
     )
     # Channel B: both durable learnings written.
     assert len(rec.bodies) == 2
@@ -96,9 +105,14 @@ def test_red_session_withholds_durable_writes(tmp_path) -> None:
     rec = _Recorder()
     seams, _cw, inbox = _seams(tmp_path, remember=rec)
     res = fanout.finalize_session(
-        [("user", "hi")], session_id="sessR", started_at="t", risk_tier_max="RED",
-        now=_now(), distill_fn=lambda *a, **k: _digest(risk_tier_max="RED"),
-        state_path=sp, **seams,
+        [("user", "hi")],
+        session_id="sessR",
+        started_at="t",
+        risk_tier_max="RED",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(risk_tier_max="RED"),
+        state_path=sp,
+        **seams,
     )
     # No durable learnings written on RED (conservative).
     assert rec.bodies == []
@@ -115,8 +129,13 @@ def test_crash_recovery_completes_idempotently(tmp_path) -> None:
 
     # begin() distills + writes the marker; then we "crash" (never call complete).
     fanout.begin(
-        [("user", "hi")], session_id="sess1", started_at="t", risk_tier_max="GREEN",
-        now=_now(), distill_fn=lambda *a, **k: _digest(), state_path=sp,
+        [("user", "hi")],
+        session_id="sess1",
+        started_at="t",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(),
+        state_path=sp,
     )
     assert statefile.load(sp).marker() is not None  # unfinalized
 
@@ -141,8 +160,13 @@ def test_replay_persists_generated_at_even_if_continuity_already_written(tmp_pat
     seams, continuity_writes, _inbox = _seams(tmp_path)
 
     marker = fanout.begin(
-        [("user", "hi")], session_id="sess1", started_at="t", risk_tier_max="GREEN",
-        now=_now(), distill_fn=lambda *a, **k: _digest(), state_path=sp,
+        [("user", "hi")],
+        session_id="sess1",
+        started_at="t",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(),
+        state_path=sp,
     )
     # Simulate: everything done except the final state save (continuity already written).
     marker.remembered = [0, 1]
@@ -165,8 +189,13 @@ def test_partial_remember_ledger_prevents_duplicates(tmp_path) -> None:
     seams, _cw, _inbox = _seams(tmp_path, remember=rec)
 
     marker = fanout.begin(
-        [("user", "hi")], session_id="sess1", started_at="t", risk_tier_max="GREEN",
-        now=_now(), distill_fn=lambda *a, **k: _digest(), state_path=sp,
+        [("user", "hi")],
+        session_id="sess1",
+        started_at="t",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(),
+        state_path=sp,
     )
     # Simulate: index 0 already written before the crash.
     marker.remembered = [0]
@@ -185,8 +214,14 @@ def test_scrub_failure_never_writes_unscrubbed(tmp_path) -> None:
 
     seams, _cw, inbox = _seams(tmp_path, scrub=boom_scrub)
     res = fanout.finalize_session(
-        [("user", "hi")], session_id="sess1", started_at="t", risk_tier_max="GREEN",
-        now=_now(), distill_fn=lambda *a, **k: _digest(), state_path=sp, **seams,
+        [("user", "hi")],
+        session_id="sess1",
+        started_at="t",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(),
+        state_path=sp,
+        **seams,
     )
     assert res.scrub_failed is True
     # No inbox file written when the scrub could not run (privacy fails safe).
@@ -199,8 +234,13 @@ def test_failed_remember_is_retried_on_replay(tmp_path) -> None:
     rec_fail = _Recorder(fail_indices=[1])
     seams, _cw, _inbox = _seams(tmp_path, remember=rec_fail)
     marker = fanout.begin(
-        [("user", "hi")], session_id="sess1", started_at="t", risk_tier_max="GREEN",
-        now=_now(), distill_fn=lambda *a, **k: _digest(), state_path=sp,
+        [("user", "hi")],
+        session_id="sess1",
+        started_at="t",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(),
+        state_path=sp,
     )
     # Complete but DON'T let it clear the marker fully by faking a crash right after
     # remember: re-load the marker to inspect the ledger.
@@ -233,10 +273,15 @@ def test_transient_remember_failure_keeps_session_recoverable(tmp_path) -> None:
     seams, _cw, inbox = _seams(tmp_path, remember=rec)
 
     # First run: the first durable write raises → that index is NOT ledgered → incomplete.
-    res1 = fanout.finalize_session(
+    fanout.finalize_session(
         [("user", "hi"), ("assistant", "hey")],
-        session_id="sess1", started_at="2026-07-18T08:00:00Z", risk_tier_max="GREEN",
-        now=_now(), distill_fn=lambda *a, **k: _digest(), state_path=sp, **seams,
+        session_id="sess1",
+        started_at="2026-07-18T08:00:00Z",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(),
+        state_path=sp,
+        **seams,
     )
     # The session is NOT silently finalized — the marker survives for replay.
     assert statefile.load(sp).marker() is not None
@@ -258,3 +303,62 @@ def test_should_finalize_rules() -> None:
     assert fanout.should_finalize(1, explicit_close=True) is True
     assert fanout.should_finalize(2, explicit_close=False) is False
     assert fanout.should_finalize(3, explicit_close=False) is True
+
+
+def test_legacy_finalizes_state_before_mirror(tmp_path, monkeypatch) -> None:
+    state_path = tmp_path / "state.json"
+    events: list[str] = []
+    seams, _continuity, _inbox = _seams(tmp_path)
+
+    def mirror(digest):
+        events.append("mirror")
+        return None, None
+
+    original = fanout._finalize_state
+
+    def finalize_state(*args, **kwargs):
+        events.append("state")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(fanout, "_finalize_state", finalize_state)
+    marker = fanout.begin(
+        [("user", "synthetic")],
+        session_id="sess1",
+        started_at="2026-07-18T08:00:00Z",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *args, **kwargs: _digest(),
+        state_path=state_path,
+    )
+
+    fanout.complete(marker, now=_now(), state_path=state_path, mirror_fn=mirror, **seams)
+
+    assert events == ["state", "mirror"]
+
+
+def test_legacy_complete_routes_through_shared_marker_free_writer(monkeypatch) -> None:
+    marker = statefile.UnfinalizedMarker(
+        session_id="synthetic-shared-writer",
+        started_at="2026-07-18T08:00:00Z",
+        end_ts="2026-07-18T09:00:00Z",
+        inbox_filename="synthetic.md",
+        digest=fanout._digest.to_jsonable(_digest()),
+    )
+    calls: list[statefile.UnfinalizedMarker] = []
+    expected = fanout.FanoutResult(
+        session_id=marker.session_id,
+        remembered=[],
+        inbox_path=None,
+        continuity_written=False,
+        risk_tier_max="GREEN",
+        durable_withheld=False,
+    )
+
+    def shared_writer(value, **kwargs):
+        calls.append(value)
+        return expected
+
+    monkeypatch.setattr(fanout, "complete_digest", shared_writer)
+
+    assert fanout.complete(marker) is expected
+    assert calls == [marker]

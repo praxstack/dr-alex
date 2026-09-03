@@ -305,9 +305,9 @@ _CONSENT_METADATA_KEYS = frozenset(
     }
 )
 _VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
-_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_IDENTIFIER_RE = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
 _LOCALE_RE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$")
-_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_SESSION_ID_RE = re.compile(r"^(?:[0-9A-HJKMNP-TV-Z]{26}|[a-z0-9][a-z0-9.-]{0,127})$")
 _MAX_POLICY_VERSION_LENGTH = 32
 _MAX_CONSENT_IDENTIFIER_LENGTH = 128
 _MAX_LOCALE_LENGTH = 35
@@ -355,6 +355,21 @@ class SessionOwner:
     source: str
     created_at: str
     ended_at: str | None = None
+
+
+@dataclass(frozen=True)
+class FinalizationOperation:
+    operation_id: str
+    session_id: str
+    subject_id: str
+    source: str
+    status: str
+    payload_enc: bytes | None
+    step_state: str
+    lease_owner: str | None
+    lease_generation: int
+    lease_expires_at: str | None
+    error_class: str | None
 
 
 def _parse_utc(value: object) -> _dt.datetime | None:
@@ -481,6 +496,16 @@ def _record_validated_consent(
     return receipt_ids
 
 
+def _log_consent_decisions(source: str, validated: ValidatedConsent) -> None:
+    for scope, decision in sorted(validated.decisions.items()):
+        _log.info(
+            "event=consent_decision source=%s scope=%s decision=%s count=1",
+            source,
+            scope,
+            decision,
+        )
+
+
 def record_consent(
     *,
     subject_id: str,
@@ -496,13 +521,15 @@ def record_consent(
     validated = validate_consent_input(consent, now=now)
     with _policy_connect(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
-        return _record_validated_consent(
+        receipt_ids = _record_validated_consent(
             conn,
             subject_id=subject_id,
             actor_principal=actor_principal,
             source=source,
             validated=validated,
         )
+    _log_consent_decisions(source, validated)
+    return receipt_ids
 
 
 def resolve_consent(
@@ -643,6 +670,8 @@ def create_session_owner_and_consent(
                 source=source,
                 validated=validated,
             )
+    if validated is not None:
+        _log_consent_decisions(source, validated)
     return owner
 
 
@@ -696,6 +725,230 @@ def close_session_owner(
             (_now_iso(now), session_id, subject_id, actor_principal, source),
         )
     return result.rowcount == 1
+
+
+def get_finalization_operation(
+    session_id: str, *, path: Path | None = None
+) -> FinalizationOperation | None:
+    with _policy_connect(path) as conn:
+        row = conn.execute(
+            "SELECT operation_id,session_id,subject_id,source,status,payload_enc,step_state,"
+            "lease_owner,lease_generation,lease_expires_at,error_class "
+            "FROM finalization_operations WHERE session_id=?",
+            (session_id,),
+        ).fetchone()
+    return FinalizationOperation(*row) if row else None
+
+
+def recoverable_finalization_sessions(
+    subject_id: str, source: str, *, path: Path | None = None
+) -> list[str]:
+    """Return this subject's unfinished encrypted operations, oldest first."""
+    with _policy_connect(path) as conn:
+        rows = conn.execute(
+            "SELECT session_id FROM finalization_operations "
+            "WHERE subject_id=? AND source=? AND payload_enc IS NOT NULL "
+            "AND status IN ('running','recovery_pending','finalization_unavailable') "
+            "ORDER BY created_at,operation_id",
+            (subject_id, source),
+        ).fetchall()
+    return [row[0] for row in rows]
+
+
+def finalization_pending_stats(
+    source: str, *, now: _dt.datetime | None = None, path: Path | None = None
+) -> tuple[int, int]:
+    """Return body-free pending count and oldest age for lifecycle telemetry."""
+    with _policy_connect(path) as conn:
+        count, oldest = conn.execute(
+            "SELECT COUNT(*),MIN(created_at) FROM finalization_operations "
+            "WHERE source=? AND payload_enc IS NOT NULL "
+            "AND status IN ('running','recovery_pending','finalization_unavailable')",
+            (source,),
+        ).fetchone()
+    parsed = _parse_utc(oldest)
+    if not count or parsed is None:
+        return int(count or 0), 0
+    age = timeutil.now_utc(now) - parsed
+    return int(count), max(0, int(age.total_seconds()))
+
+
+def _lease_window(now: _dt.datetime | None, lease_seconds: int) -> tuple[str, str]:
+    lease_now = now or _dt.datetime.now(_dt.UTC)
+    if lease_now.tzinfo is None:
+        lease_now = lease_now.replace(tzinfo=_dt.UTC)
+    current_at = _canonical_utc(lease_now)
+    expires_at = _canonical_utc(lease_now + _dt.timedelta(seconds=max(1, min(30, lease_seconds))))
+    return current_at, expires_at
+
+
+def create_finalization(
+    session_id: str,
+    *,
+    subject_id: str,
+    source: str,
+    status: str,
+    payload: str | None = None,
+    lease_owner: str | None = None,
+    lease_seconds: int | None = None,
+    now: _dt.datetime | None = None,
+    path: Path | None = None,
+) -> FinalizationOperation:
+    """Create one encrypted operation, or return the existing operation."""
+    timestamp = _now_iso(now)
+    lease_expires_at = None
+    if lease_owner is not None:
+        _, lease_expires_at = _lease_window(now, 5 if lease_seconds is None else lease_seconds)
+    payload_enc = crypto.encrypt(payload)
+    with _policy_connect(path) as conn:
+        conn.execute(
+            "INSERT INTO finalization_operations "
+            "(operation_id,session_id,subject_id,source,status,payload_enc,step_state,lease_owner,"
+            "lease_generation,lease_expires_at,created_at,updated_at,error_class) "
+            "VALUES (?,?,?,?,?,?,'{}',?,1,?,?,?,NULL) "
+            "ON CONFLICT(session_id) DO NOTHING",
+            (
+                ulid.new(),
+                session_id,
+                subject_id,
+                source,
+                status,
+                payload_enc,
+                lease_owner,
+                lease_expires_at,
+                timestamp,
+                timestamp,
+            ),
+        )
+        row = conn.execute(
+            "SELECT operation_id,session_id,subject_id,source,status,payload_enc,step_state,"
+            "lease_owner,lease_generation,lease_expires_at,error_class "
+            "FROM finalization_operations WHERE session_id=?",
+            (session_id,),
+        ).fetchone()
+        operation = FinalizationOperation(*row) if row else None
+    if operation is None or (operation.subject_id, operation.source) != (subject_id, source):
+        raise sqlite3.IntegrityError("finalization owner mismatch")
+    return operation
+
+
+def claim_finalization(
+    operation_id: str,
+    *,
+    lease_owner: str,
+    lease_seconds: int = 5,
+    now: _dt.datetime | None = None,
+    path: Path | None = None,
+) -> bool:
+    """Claim one eligible operation by bound ID; never claim a sibling row."""
+    current_at, expires_at = _lease_window(now, lease_seconds)
+    with _policy_connect(path) as conn:
+        result = conn.execute(
+            "UPDATE finalization_operations SET status='running',lease_owner=?,"
+            "lease_generation=lease_generation+1,lease_expires_at=?,updated_at=? "
+            "WHERE operation_id=? "
+            "AND status IN ('running','recovery_pending','finalization_unavailable') "
+            "AND (lease_owner IS NULL OR lease_expires_at IS NULL OR lease_expires_at<=?)",
+            (lease_owner, expires_at, current_at, operation_id, current_at),
+        )
+    return result.rowcount == 1
+
+
+def renew_finalization(
+    operation_id: str,
+    *,
+    lease_owner: str,
+    lease_generation: int,
+    lease_seconds: int = 5,
+    now: _dt.datetime | None = None,
+    path: Path | None = None,
+) -> bool:
+    """Extend one unexpired lease without changing its generation."""
+    current_at, expires_at = _lease_window(now, lease_seconds)
+    with _policy_connect(path) as conn:
+        result = conn.execute(
+            "UPDATE finalization_operations SET lease_expires_at=?,updated_at=? "
+            "WHERE operation_id=? AND lease_owner=? AND lease_generation=? "
+            "AND status='running' AND lease_expires_at>?",
+            (
+                expires_at,
+                current_at,
+                operation_id,
+                lease_owner,
+                lease_generation,
+                current_at,
+            ),
+        )
+    return result.rowcount == 1
+
+
+def update_finalization_fenced(
+    operation_id: str,
+    *,
+    lease_owner: str,
+    lease_generation: int,
+    step_state: str,
+    status: str | None = None,
+    payload: str | None = None,
+    clear_payload: bool = False,
+    release_lease: bool = False,
+    error_class: str | None = None,
+    now: _dt.datetime | None = None,
+    path: Path | None = None,
+) -> bool:
+    """Update one running operation only while its exact lease fence still matches."""
+    payload_enc = crypto.encrypt(payload) if payload is not None else None
+    current_at = _now_iso(now)
+    with _policy_connect(path) as conn:
+        result = conn.execute(
+            "UPDATE finalization_operations SET step_state=?,status=COALESCE(?,status),"
+            "payload_enc=CASE WHEN ? THEN NULL WHEN ? THEN ? ELSE payload_enc END,"
+            "error_class=?,updated_at=?,"
+            "lease_owner=CASE WHEN ? THEN NULL ELSE lease_owner END,"
+            "lease_expires_at=CASE WHEN ? THEN NULL ELSE lease_expires_at END "
+            "WHERE operation_id=? AND lease_owner=? AND lease_generation=? AND status='running' "
+            "AND lease_expires_at>?",
+            (
+                step_state,
+                status,
+                clear_payload,
+                payload is not None,
+                payload_enc,
+                error_class,
+                current_at,
+                release_lease,
+                release_lease,
+                operation_id,
+                lease_owner,
+                lease_generation,
+                current_at,
+            ),
+        )
+    return result.rowcount == 1
+
+
+def update_finalization(
+    session_id: str,
+    *,
+    step_state: str,
+    status: str | None = None,
+    clear_payload: bool = False,
+    error_class: str | None = None,
+    now: _dt.datetime | None = None,
+    path: Path | None = None,
+) -> FinalizationOperation:
+    """Persist synthetic progress; completion may atomically erase the replay payload."""
+    with _policy_connect(path) as conn:
+        result = conn.execute(
+            "UPDATE finalization_operations SET step_state=?,status=COALESCE(?,status),"
+            "payload_enc=CASE WHEN ? THEN NULL ELSE payload_enc END,error_class=?,updated_at=? "
+            "WHERE session_id=?",
+            (step_state, status, clear_payload, error_class, _now_iso(now), session_id),
+        )
+    operation = get_finalization_operation(session_id, path=path)
+    if result.rowcount != 1 or operation is None:
+        raise sqlite3.IntegrityError("finalization operation missing")
+    return operation
 
 
 # ---------------------------------------------------------------------------

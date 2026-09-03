@@ -1,0 +1,1017 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc 3.10.2" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Dr. Alex Memory Architecture v5</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: 1.5em;}
+    div.column{flex: auto;}
+    @media screen {
+    div.columns{gap: min(4vw, 1.5em);}
+    div.column{overflow-x: auto;}
+    }
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+  <link rel="stylesheet" href="spec.css" />
+</head>
+<body>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#dr.-alex-memory-architecture-v5"
+id="toc-dr.-alex-memory-architecture-v5">Dr. Alex memory architecture
+v5</a>
+<ul>
+<li><a href="#purpose" id="toc-purpose">1. Purpose</a></li>
+<li><a href="#current-verified-state" id="toc-current-verified-state">2.
+Current verified state</a></li>
+<li><a href="#architecture-decisions" id="toc-architecture-decisions">3.
+Architecture decisions</a>
+<ul>
+<li><a href="#a1.-canonical-and-derived-records-stay-separate"
+id="toc-a1.-canonical-and-derived-records-stay-separate">A1. Canonical
+and derived records stay separate</a></li>
+<li><a href="#a2.-receipt-is-not-consent"
+id="toc-a2.-receipt-is-not-consent">A2. Receipt is not consent</a></li>
+<li><a href="#a3.-one-subject-distinct-actors-and-sources"
+id="toc-a3.-one-subject-distinct-actors-and-sources">A3. One subject,
+distinct actors and sources</a></li>
+<li><a
+href="#a4.-authenticated-local-requests-imply-transient-processing"
+id="toc-a4.-authenticated-local-requests-imply-transient-processing">A4.
+Authenticated local requests imply transient processing</a></li>
+<li><a
+href="#a5.-durable-memory-requires-retained-provenance-in-the-enforced-profile"
+id="toc-a5.-durable-memory-requires-retained-provenance-in-the-enforced-profile">A5.
+Durable memory requires retained provenance in the enforced
+profile</a></li>
+<li><a
+href="#a6.-ownership-ships-independently-tui-memory-behavior-stays-unchanged"
+id="toc-a6.-ownership-ships-independently-tui-memory-behavior-stays-unchanged">A6.
+Ownership ships independently; TUI memory behavior stays
+unchanged</a></li>
+<li><a
+href="#a7.-current-turn-safety-precedes-retrieval-and-persistence"
+id="toc-a7.-current-turn-safety-precedes-retrieval-and-persistence">A7.
+Current-turn safety precedes retrieval and persistence</a></li>
+<li><a href="#a8.-encrypted-state-for-legacy-and-new-finalization"
+id="toc-a8.-encrypted-state-for-legacy-and-new-finalization">A8.
+Encrypted state for legacy and new finalization</a></li>
+<li><a href="#a9.-request-fields-never-grant-high-sensitivity-access"
+id="toc-a9.-request-fields-never-grant-high-sensitivity-access">A9.
+Request fields never grant high-sensitivity access</a></li>
+<li><a
+href="#a10.-physical-clinical-isolation-is-a-later-approved-stage"
+id="toc-a10.-physical-clinical-isolation-is-a-later-approved-stage">A10.
+Physical clinical isolation is a later approved stage</a></li>
+<li><a href="#a11.-hermes-integration-uses-a-body-free-finalize-hook"
+id="toc-a11.-hermes-integration-uses-a-body-free-finalize-hook">A11.
+Hermes integration uses a body-free finalize hook</a></li>
+<li><a href="#a12.-retrieval-remains-session-start-bm25-in-this-run"
+id="toc-a12.-retrieval-remains-session-start-bm25-in-this-run">A12.
+Retrieval remains session-start BM25 in this run</a></li>
+</ul></li>
+<li><a href="#consent-model" id="toc-consent-model">4. Consent model</a>
+<ul>
+<li><a href="#scopes" id="toc-scopes">4.1 Scopes</a></li>
+<li><a href="#consent-receipt" id="toc-consent-receipt">4.2 Consent
+receipt</a></li>
+<li><a href="#resolution" id="toc-resolution">4.3 Resolution</a></li>
+</ul></li>
+<li><a href="#d1-storage-contract" id="toc-d1-storage-contract">5. D1
+storage contract</a>
+<ul>
+<li><a href="#consent_receipts" id="toc-consent_receipts">5.1
+<code>consent_receipts</code></a></li>
+<li><a href="#session_owners" id="toc-session_owners">5.2
+<code>session_owners</code></a></li>
+<li><a href="#finalization_operations"
+id="toc-finalization_operations">5.3
+<code>finalization_operations</code></a></li>
+</ul></li>
+<li><a href="#lifecycle-status-contract"
+id="toc-lifecycle-status-contract">6. Lifecycle status contract</a></li>
+<li><a href="#d1-lifecycle" id="toc-d1-lifecycle">7. D1 lifecycle</a>
+<ul>
+<li><a href="#start" id="toc-start">Start</a></li>
+<li><a href="#turn" id="toc-turn">Turn</a></li>
+<li><a href="#end" id="toc-end">End</a></li>
+</ul></li>
+<li><a href="#current-sink-inventory" id="toc-current-sink-inventory">8.
+Current sink inventory</a></li>
+<li><a href="#m1-request-flag-hardening"
+id="toc-m1-request-flag-hardening">9. M1 request-flag hardening</a></li>
+<li><a href="#threat-model" id="toc-threat-model">10. Threat model</a>
+<ul>
+<li><a href="#assets" id="toc-assets">Assets</a></li>
+<li><a href="#boundaries" id="toc-boundaries">Boundaries</a></li>
+<li><a href="#required-abuse-tests"
+id="toc-required-abuse-tests">Required abuse tests</a></li>
+</ul></li>
+<li><a href="#program-stages" id="toc-program-stages">11. Program
+stages</a></li>
+<li><a href="#kill-criteria" id="toc-kill-criteria">12. Kill
+criteria</a></li>
+<li><a href="#architecture-acceptance"
+id="toc-architecture-acceptance">13. Architecture acceptance</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="dr.-alex-memory-architecture-v5">Dr. Alex memory architecture
+v5</h1>
+<p><strong>Status:</strong> Review candidate; implementation
+blocked<br />
+<strong>As of:</strong> 2026-08-23<br />
+<strong>Supersedes:</strong> <code>ARCHITECTURE.md</code> rc1 in Git
+history<br />
+<strong>Run contract:</strong> <code>RUN-CONTRACT.md</code><br />
+<strong>Activation:</strong> Prohibited</p>
+<h2 id="purpose">1. Purpose</h2>
+<p>Dr. Alex needs one consent-governed memory lifecycle across its
+standalone surfaces and, later, Hermes. Remembering everything does not
+mean putting all history in every prompt. It means processing every
+authorized event through a traceable policy, keeping raw records
+separate from derived memory, and retrieving only the minimum authorized
+context for the current task.</p>
+<p>Dr. Alex is not a clinician, diagnostic system, or emergency service.
+Current-turn safety logic remains independent of memory.</p>
+<h2 id="current-verified-state">2. Current verified state</h2>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>Component</th>
+<th>Current state</th>
+<th>Evidence class</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Dr. Alex TUI</td>
+<td>Calls the existing fan-out at session end</td>
+<td>source and tests</td>
+</tr>
+<tr>
+<td>Dr. Alex PWA</td>
+<td>Ends telemetry and drops in-memory session; no fan-out</td>
+<td>source and tests</td>
+</tr>
+<tr>
+<td>Dr. Alex one-shot CLI</td>
+<td>Flushes Hermes-independent session telemetry; no reusable-memory
+finalization contract</td>
+<td>source</td>
+</tr>
+<tr>
+<td>Dr. Alex transcripts</td>
+<td>Encrypted in <code>state.db</code>, but every turn persists
+regardless of retention consent</td>
+<td>source</td>
+</tr>
+<tr>
+<td>Dr. Alex crash marker</td>
+<td>One global plaintext JSON payload that can hold a derived
+digest</td>
+<td>source</td>
+</tr>
+<tr>
+<td>PWA identity</td>
+<td>Device token validates, but current helper discards the matched
+device ID</td>
+<td>source</td>
+</tr>
+<tr>
+<td>agent-memory MCP</td>
+<td>Available to the therapist profile as a manual tool path</td>
+<td>live config and logs</td>
+</tr>
+<tr>
+<td>agent-memory full-body read</td>
+<td>High sensitivity can be enabled by request
+<code>include_sensitive</code></td>
+<td>source</td>
+</tr>
+<tr>
+<td>agent-memory recall</td>
+<td>Explicit <code>sensitivity_ceiling=high</code> is launch-name gated,
+but legacy request <code>include_sensitive=true</code> still returns
+high snippets to a general MCP client</td>
+<td>source and tests</td>
+</tr>
+<tr>
+<td>agent-memory storage</td>
+<td>Markdown canonical store; no content-encryption adapter</td>
+<td>source</td>
+</tr>
+<tr>
+<td>Hermes finalize hook</td>
+<td>Emits session ID, platform, and reason, not transcript bodies</td>
+<td>source</td>
+</tr>
+<tr>
+<td>Universal continuity</td>
+<td>Not proven</td>
+<td>absence of end-to-end receipt set</td>
+</tr>
+</tbody>
+</table>
+<p>The earlier report wording that agent-memory was not connected is
+stale. It is registered and manually callable. Automatic lifecycle
+capture remains unproven.</p>
+<h2 id="architecture-decisions">3. Architecture decisions</h2>
+<h3 id="a1.-canonical-and-derived-records-stay-separate">A1. Canonical
+and derived records stay separate</h3>
+<p>The architecture recognizes these record classes:</p>
+<ol type="1">
+<li>consent receipts;</li>
+<li>authorized encrypted transcript events;</li>
+<li>encrypted finalization operations and step receipts;</li>
+<li>structured reusable memories;</li>
+<li>summaries and continuity artifacts;</li>
+<li>rebuildable indexes;</li>
+<li>prompt context selected for one turn.</li>
+</ol>
+<p>No summary, index, or prompt fragment becomes the canonical
+transcript.</p>
+<h3 id="a2.-receipt-is-not-consent">A2. Receipt is not consent</h3>
+<p>Message receipt proves transport. It does not grant retention,
+reusable memory, cross-surface recall, or export.</p>
+<h3 id="a3.-one-subject-distinct-actors-and-sources">A3. One subject,
+distinct actors and sources</h3>
+<p>Dr. Alex is a local single-user system for this version.</p>
+<ul>
+<li><code>subject_id</code> identifies the one local user. It is an
+opaque stable value derived locally and never accepted from a
+request.</li>
+<li><code>actor_principal</code> identifies who supplied a decision or
+request. PWA uses the verified paired-device ID. TUI and local CLI use
+fixed local actors while the process remains single-user.</li>
+<li><code>source</code> identifies the interaction surface:
+<code>desktop</code>, <code>pwa</code>, or <code>cli</code>.</li>
+<li>A PWA session is owned by one paired-device actor. Another device
+cannot turn, check in to, end, or reopen that session.</li>
+</ul>
+<p>Homework, continuity, and date-range export are global paired-device
+endpoints today. They are outside the session-ownership slice and remain
+gated only by existing device authentication.</p>
+<p>Cross-surface recall uses the common subject and distinct source
+labels, but remains disabled until its own grant and later integration
+tests pass.</p>
+<h3 id="a4.-authenticated-local-requests-imply-transient-processing">A4.
+Authenticated local requests imply transient processing</h3>
+<p>The system may process an authenticated local request to answer the
+current turn. D1 does not persist a separate
+<code>transient_processing</code> grant. Durable scopes remain default
+deny.</p>
+<h3
+id="a5.-durable-memory-requires-retained-provenance-in-the-enforced-profile">A5.
+Durable memory requires retained provenance in the enforced profile</h3>
+<p>When <code>DR_ALEX_CONSENT_ENFORCEMENT=true</code> for the alexd/PWA
+profile:</p>
+<pre class="text"><code>durable_memory_granted implies transcript_retention_granted</code></pre>
+<p>Under that profile, absent transcript retention writes body-free
+safety telemetry only. It writes no transcript body, summary, reusable
+memory, inbox note, continuity brief, Active File update, Notion export,
+or finalization payload.</p>
+<p>When PWA enforcement is false, legacy transcript behavior remains
+unchanged and is explicitly not called consent-governed. TUI and
+one-shot CLI remain on explicit <code>legacy</code> policy in this slice
+even if an operator sets the alexd/PWA flag; they are not silently
+enrolled. Human activation must decide how to migrate them. This rule
+avoids inventing a second provenance store.</p>
+<h3
+id="a6.-ownership-ships-independently-tui-memory-behavior-stays-unchanged">A6.
+Ownership ships independently; TUI memory behavior stays unchanged</h3>
+<p>PWA owner binding is an authentication hardening change and is always
+on after D1. Only <code>/session/start</code> creates a named session.
+<code>/turn</code> and <code>/session/end</code> require an existing
+owner. <code>/checkin</code> creates a session when no ID is supplied
+and otherwise requires the existing owner. Cross-device mismatch returns
+external 404.</p>
+<p>Consent enforcement and PWA durable finalization remain default off.
+Existing TUI memory behavior remains unchanged in this slice; no
+compatibility flag is needed.</p>
+<p>The activation gate must decide how to migrate or replace legacy TUI
+consent behavior. Code must not silently turn it off or treat it as
+consent.</p>
+<h3 id="a7.-current-turn-safety-precedes-retrieval-and-persistence">A7.
+Current-turn safety precedes retrieval and persistence</h3>
+<p>The current turn follows this order:</p>
+<pre class="text"><code>authenticate request
+    -&gt; resolve subject, actor, source, and effective consent
+    -&gt; deterministic safety triage
+    -&gt; RED: crisis response, no retrieval, no derived memory
+    -&gt; GREEN or AMBER: current session-start memory behavior
+    -&gt; model and output gates
+    -&gt; body-free telemetry
+    -&gt; transcript policy: enforced profile retains only with active consent; legacy profile preserves current behavior</code></pre>
+<p>RED behavior for the new consent-enforced path is explicit:</p>
+<ul>
+<li>no book or memory retrieval;</li>
+<li>no reusable memory, inbox, continuity, Active File, or Notion
+write;</li>
+<li>encrypted transcript retention only when an active
+transcript-retention grant permits it;</li>
+<li>current legacy TUI behavior remains unchanged while consent
+enforcement is disabled.</li>
+</ul>
+<h3 id="a8.-encrypted-state-for-legacy-and-new-finalization">A8.
+Encrypted state for legacy and new finalization</h3>
+<p>D1 encrypts the existing TUI marker digest in
+<code>session_state.json</code> with the existing Dr. Alex Fernet
+helper. Metadata stays plaintext. Loading a legacy plaintext marker is
+supported in tests and the next successful state write replaces it with
+ciphertext. The user-facing TUI fan-out behavior does not change.</p>
+<p>Only the consent-enforced PWA path stores a
+<code>finalization_operation</code> in existing <code>state.db</code>;
+default configuration creates no such row. Body-bearing fields are
+encrypted. A denied-retention, denied-durable, RED, or writer-disabled
+terminal row is body-free, has no replay payload, and stores null lease
+owner and expiry. Authorized writer-enabled durable work atomically
+creates or loads one row and claims one fenced lease. Duplicate end
+requests return its completed receipt, resume unfinished steps under a
+current-consent check, or report that another worker owns the lease. Two
+sessions cannot overwrite each other.</p>
+<p>Extract the sink-writing body from existing fan-out completion into
+one marker-free shared function. Legacy TUI <code>complete</code> calls
+it and maintains its encrypted marker. The PWA operation runner calls it
+with synthetic sinks and its operation row, never the global marker. D1
+enables no new live PWA writer.</p>
+<h3 id="a9.-request-fields-never-grant-high-sensitivity-access">A9.
+Request fields never grant high-sensitivity access</h3>
+<p><code>include_sensitive</code>, requested client names, tags, roots,
+filters, and sensitivity ceilings can narrow a request. They cannot
+grant authority.</p>
+<p>Removing request-flag authority is safe to implement now. Physical
+clinical isolation is not.</p>
+<h3 id="a10.-physical-clinical-isolation-is-a-later-approved-stage">A10.
+Physical clinical isolation is a later approved stage</h3>
+<p>The existing general root and same-user processes cannot satisfy
+physical clinical isolation. POSIX modes are defense-in-depth, not the
+boundary.</p>
+<p>The later M1 physical-isolation stage requires a separately approved
+design with:</p>
+<ul>
+<li>a non-self-asserted process identity;</li>
+<li>an encrypted clinical store;</li>
+<li>a key unavailable to the general Hermes process;</li>
+<li>an authenticated local transport;</li>
+<li>explicit key ownership, rotation, restore, and failure
+behavior;</li>
+<li>synthetic proof that the general identity cannot read a clinical
+fixture;</li>
+<li>no fallback to general storage.</li>
+</ul>
+<p>No clinical root, key, user, daemon, socket, or live policy is
+created in this run.</p>
+<h3 id="a11.-hermes-integration-uses-a-body-free-finalize-hook">A11.
+Hermes integration uses a body-free finalize hook</h3>
+<p>H1 remains a later stage. The finalize hook stays body-free.</p>
+<p>The current hook carries session metadata only. A later H1 adapter
+must:</p>
+<ol type="1">
+<li>receive session ID, source, and reason;</li>
+<li>authorize the adapter and resolve consent;</li>
+<li>read an already committed session through a narrow profile-aware
+session-store API;</li>
+<li>create an encrypted, idempotent local job;</li>
+<li>return within the existing finalize timeout;</li>
+<li>ship disabled.</li>
+</ol>
+<p>The hook payload never gains transcript bodies for this
+architecture.</p>
+<h3 id="a12.-retrieval-remains-session-start-bm25-in-this-run">A12.
+Retrieval remains session-start BM25 in this run</h3>
+<p>No per-turn retrieval rewrite, vector dependency, graph projection,
+or new selector belongs in D1 or request-flag hardening. Current
+session-start memory assembly remains the implemented behavior. Later
+retrieval changes require held-out gain with no safety or privacy
+regression.</p>
+<h2 id="consent-model">4. Consent model</h2>
+<h3 id="scopes">4.1 Scopes</h3>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>Scope</th>
+<th>Meaning</th>
+<th>D1 status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>transcript_retention</code></td>
+<td>keep encrypted conversation bodies after the turn</td>
+<td>implemented disabled</td>
+</tr>
+<tr>
+<td><code>durable_memory</code></td>
+<td>extract reusable memory from retained authorized events</td>
+<td>implemented disabled; depends on retention</td>
+</tr>
+<tr>
+<td><code>cross_surface_recall</code></td>
+<td>recall authorized memory on another source</td>
+<td>receipt only; behavior disabled</td>
+</tr>
+<tr>
+<td><code>clinical_export</code></td>
+<td>send or export clinical content outside the canonical local
+store</td>
+<td>not implemented</td>
+</tr>
+<tr>
+<td><code>clinical_share</code></td>
+<td>share selected content with an approved person or system</td>
+<td>not implemented</td>
+</tr>
+</tbody>
+</table>
+<p>Absent, expired, malformed, denied, or withdrawn consent resolves to
+deny.</p>
+<h3 id="consent-receipt">4.2 Consent receipt</h3>
+<p>A receipt contains:</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>receipt_id</code></td>
+<td>ULID string</td>
+<td>primary key</td>
+</tr>
+<tr>
+<td><code>subject_id</code></td>
+<td>opaque string</td>
+<td>derived locally</td>
+</tr>
+<tr>
+<td><code>actor_principal</code></td>
+<td>opaque string</td>
+<td>verified actor</td>
+</tr>
+<tr>
+<td><code>source</code></td>
+<td>enum</td>
+<td><code>desktop</code>, <code>pwa</code>, <code>cli</code></td>
+</tr>
+<tr>
+<td><code>scope</code></td>
+<td>enum</td>
+<td>one known scope</td>
+</tr>
+<tr>
+<td><code>decision</code></td>
+<td>enum</td>
+<td><code>granted</code>, <code>denied</code>,
+<code>withdrawn</code></td>
+</tr>
+<tr>
+<td><code>effective_at</code></td>
+<td>UTC timestamp</td>
+<td>required</td>
+</tr>
+<tr>
+<td><code>expires_at</code></td>
+<td>UTC timestamp or null</td>
+<td>later than effective time</td>
+</tr>
+<tr>
+<td><code>policy_version</code></td>
+<td>semantic version string</td>
+<td>policy evaluator version</td>
+</tr>
+<tr>
+<td><code>copy_version</code></td>
+<td>string</td>
+<td>immutable displayed-copy ID</td>
+</tr>
+<tr>
+<td><code>retention_policy_version</code></td>
+<td>string</td>
+<td>immutable retention rule ID</td>
+</tr>
+<tr>
+<td><code>purpose_version</code></td>
+<td>string</td>
+<td>immutable purpose statement ID</td>
+</tr>
+<tr>
+<td><code>locale</code></td>
+<td>BCP 47 string</td>
+<td>default <code>en</code> in tests</td>
+</tr>
+<tr>
+<td><code>acquisition_channel</code></td>
+<td>enum</td>
+<td><code>api_test</code>, <code>desktop</code>, <code>pwa</code>,
+<code>cli</code></td>
+</tr>
+<tr>
+<td><code>supersedes</code></td>
+<td>ULID string or null</td>
+<td>prior decision for subject, source, scope</td>
+</tr>
+</tbody>
+</table>
+<p>No conversation body belongs in a receipt.</p>
+<p>The Room JavaScript cannot send <code>granted</code> before consent
+copy and UI receive design and human approval. D1 may exercise grants
+only through synthetic tests or operator fixtures in an isolated
+profile.</p>
+<h3 id="resolution">4.3 Resolution</h3>
+<p>Resolution is one transactionally ordered query by subject, source,
+scope, <code>effective_at</code>, then <code>receipt_id</code>. It
+accepts rows only when <code>effective_at &lt;= now</code> and
+<code>expires_at</code> is null or later than <code>now</code>. It
+rejects malformed rows and unknown keys. Equal timestamps are ordered by
+higher ULID first. A malformed active row denies the scope and emits a
+body-free diagnostic.</p>
+<h2 id="d1-storage-contract">5. D1 storage contract</h2>
+<p>D1 adds tables to existing encrypted Dr. Alex state infrastructure.
+Consent itself is not controlled by <code>DR_ALEX_TELEMETRY_OFF</code>.
+If consent storage is unavailable, durable processing fails closed.</p>
+<h3 id="consent_receipts">5.1 <code>consent_receipts</code></h3>
+<p>Stores the fields in section 4.2. Schema migration increments the
+existing schema version and upgrades an existing database without
+dropping rows.</p>
+<h3 id="session_owners">5.2 <code>session_owners</code></h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>session_id</code></td>
+<td>string</td>
+<td>primary key</td>
+</tr>
+<tr>
+<td><code>subject_id</code></td>
+<td>opaque string</td>
+<td>required</td>
+</tr>
+<tr>
+<td><code>actor_principal</code></td>
+<td>opaque string</td>
+<td>verified paired device for PWA</td>
+</tr>
+<tr>
+<td><code>source</code></td>
+<td>enum</td>
+<td>required</td>
+</tr>
+<tr>
+<td><code>created_at</code></td>
+<td>UTC timestamp</td>
+<td>required</td>
+</tr>
+<tr>
+<td><code>ended_at</code></td>
+<td>UTC timestamp or null</td>
+<td>set once</td>
+</tr>
+</tbody>
+</table>
+<h3 id="finalization_operations">5.3
+<code>finalization_operations</code></h3>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>operation_id</code></td>
+<td>ULID string</td>
+<td>primary key</td>
+</tr>
+<tr>
+<td><code>session_id</code></td>
+<td>string</td>
+<td>unique</td>
+</tr>
+<tr>
+<td><code>subject_id</code></td>
+<td>opaque string</td>
+<td>required</td>
+</tr>
+<tr>
+<td><code>source</code></td>
+<td>enum</td>
+<td>required</td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td>enum</td>
+<td>section 6</td>
+</tr>
+<tr>
+<td><code>payload_enc</code></td>
+<td>bytes or null</td>
+<td>encrypted retained digest and replay input</td>
+</tr>
+<tr>
+<td><code>step_state</code></td>
+<td>JSON text</td>
+<td>body-free deterministic step IDs and statuses</td>
+</tr>
+<tr>
+<td><code>lease_owner</code></td>
+<td>string or null</td>
+<td>opaque resume worker ID</td>
+</tr>
+<tr>
+<td><code>lease_generation</code></td>
+<td>integer</td>
+<td>starts at 1 and increments on each successful claim</td>
+</tr>
+<tr>
+<td><code>lease_expires_at</code></td>
+<td>UTC timestamp or null</td>
+<td>maximum 30 seconds</td>
+</tr>
+<tr>
+<td><code>created_at</code></td>
+<td>UTC timestamp</td>
+<td>required</td>
+</tr>
+<tr>
+<td><code>updated_at</code></td>
+<td>UTC timestamp</td>
+<td>required</td>
+</tr>
+<tr>
+<td><code>error_class</code></td>
+<td>string or null</td>
+<td>exception class only</td>
+</tr>
+</tbody>
+</table>
+<p>No free text is plaintext. Operation creation is atomic and unique by
+session. Authorized durable creation commits encrypted replay payload,
+status <code>running</code>, owner, generation, and lease expiry in one
+transaction. A duplicate request reads the existing operation. Every
+step/final update is fenced by
+<code>(operation_id, lease_owner, lease_generation)</code>; a stale
+worker whose lease was replaced cannot mutate state.</p>
+<h2 id="lifecycle-status-contract">6. Lifecycle status contract</h2>
+<p>One public result enum is used in architecture, API, tests, and
+receipts. An operation may use internal status <code>running</code>
+while it owns a lease; <code>running</code> is never returned as a
+lifecycle result:</p>
+<ul>
+<li><code>closed_transient</code>: no retained transcript and no durable
+memory;</li>
+<li><code>finalized_no_memory_consent</code>: transcript retained,
+durable memory denied;</li>
+<li><code>finalization_disabled</code>: consent permits durable memory
+but the default-off writer gate prevents any sink call;</li>
+<li><code>finalized_red_withheld</code>: transcript may be retained, all
+derived outputs withheld;</li>
+<li><code>finalized</code>: authorized operation completed;</li>
+<li><code>finalization_unavailable</code>: writer enabled but no
+approved runner is bound;</li>
+<li><code>recovery_pending</code>: accepted operation is incomplete and
+has a durable retry record;</li>
+<li><code>session_not_found</code>: unknown session and no prior
+operation.</li>
+</ul>
+<p>API rules:</p>
+<ul>
+<li>completed states return HTTP 200 with <code>ok: true</code>,
+<code>complete: true</code>;</li>
+<li><code>finalization_unavailable</code> returns HTTP 503 with
+<code>ok: false</code>, <code>complete: false</code>;</li>
+<li><code>recovery_pending</code> returns HTTP 202 with
+<code>ok: false</code>, <code>complete: false</code>;</li>
+<li><code>session_not_found</code> returns HTTP 404 with
+<code>ok: false</code>, <code>complete: false</code>;</li>
+<li>no response contains a transcript or memory body.</li>
+</ul>
+<h2 id="d1-lifecycle">7. D1 lifecycle</h2>
+<h3 id="start">Start</h3>
+<ol type="1">
+<li>authenticate device and resolve the verified device actor;</li>
+<li>resolve stable local subject;</li>
+<li>atomically create the owner row, or load an active row for the same
+actor;</li>
+<li>reject an existing session owned by another actor with external
+404;</li>
+<li>reject reuse of an ended session ID with the same external 404;
+ended IDs are never reopened;</li>
+<li>when consent enforcement is enabled, validate test-only consent
+input, persist receipts, and resolve effective consent;</li>
+<li>when consent enforcement is enabled, recover only same-subject
+operations authorized by consent re-resolved immediately before lease
+claim;</li>
+<li>assemble current session-start memory only when current behavior and
+gates permit it;</li>
+<li>create the in-process session bound to the owner row.</li>
+</ol>
+<p>Only <code>/session/start</code> creates a caller-supplied named
+session. <code>/checkin</code> may create a server-generated session
+when no ID is supplied; with an ID it requires the existing owner.
+<code>/turn</code> and <code>/session/end</code> never create a missing
+session.</p>
+<p>A timed-out recovery job cannot continue mutating shared state
+without its durable operation row. Prompt assembly never reads from a
+sink that an unfinished worker is changing.</p>
+<h3 id="turn">Turn</h3>
+<ol type="1">
+<li>require the same actor that owns an existing session;</li>
+<li>run the shared safety-first turn;</li>
+<li>always write body-free safety telemetry when telemetry is
+enabled;</li>
+<li>under consent enforcement, pass explicit <code>retain</code> or
+<code>deny</code> transcript policy, defaulting absent consent to
+<code>deny</code>;</li>
+<li>under legacy mode, pass explicit <code>legacy</code> policy and
+preserve current transcript behavior;</li>
+<li>for a live session, re-resolve current consent at End and apply that
+current policy to pending-fragment drain.</li>
+</ol>
+<h3 id="end">End</h3>
+<ol type="1">
+<li>require the owning actor; an active session follows the normal end
+path, while an ended owner may access only its existing operation
+receipt or resume path;</li>
+<li>when consent enforcement is active and the session is live,
+re-resolve current consent <strong>before</strong> pending-fragment
+drain, derive <code>retain</code> or <code>deny</code>, and drain with
+that current policy;</li>
+<li>when enforcement is disabled and the session is live, drain with
+<code>legacy</code>, close telemetry, mark the owner ended, remove the
+live session, and create no operation;</li>
+<li>under enforcement, short-circuit absent/expired/withdrawn retention,
+RED, and denied durable memory into body-free completed operation
+receipts with <code>payload_enc = null</code>;</li>
+<li>for authorized durable work, create the operation with encrypted
+payload and an initial fenced lease, or load the existing row;</li>
+<li>return completed receipts unchanged;</li>
+<li>before every loaded pending/unavailable/running-expired resume,
+re-resolve current consent without mutating the operation;</li>
+<li>claim resumable work with one compare-and-swap over status and lease
+expiry;</li>
+<li>if the resolved consent is absent, expired, or withdrawn, erase the
+payload under the active fence, store the body-free no-memory result,
+and stop all unfinished work;</li>
+<li>before each sink step, re-resolve current consent, then renew the
+lease; withdrawal or expiry erases the payload under the active fence
+and stops all unfinished work;</li>
+<li>fence every step and final write by lease owner and generation;</li>
+<li>return HTTP 202 when another unexpired worker owns the lease; a
+stale worker cannot write after takeover;</li>
+<li>remove the in-process session only after a completed or durable
+pending record exists, mark the owner ended once, and return the
+persisted result.</li>
+</ol>
+<p>An End retry after response loss may succeed without a live session
+only when the same actor owns an ended session and a matching operation
+exists. It returns or resumes that operation; it never recreates the
+in-process session. An ended owner with no operation returns the same
+external 404.</p>
+<p>No broad <code>except Exception</code> converts programmer errors
+into success. Named operational storage, crypto, and scrub failures
+produce <code>recovery_pending</code> if an operation exists. Unexpected
+errors log class only and propagate to the transport error handler.</p>
+<h2 id="current-sink-inventory">8. Current sink inventory</h2>
+<p>Every later retention, withdrawal, deletion, backup, and export
+design must account for:</p>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>Sink</th>
+<th>Current content class</th>
+<th>D1 rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>statedb.transcripts</code></td>
+<td>encrypted raw bodies</td>
+<td>consent-aware when enforcement enabled</td>
+</tr>
+<tr>
+<td><code>session_state.json</code> legacy marker</td>
+<td>encrypted derived digest plus body-free metadata</td>
+<td>encryption migration; existing TUI behavior preserved</td>
+</tr>
+<tr>
+<td>finalization operation</td>
+<td>encrypted retained digest and body-free step receipts</td>
+<td>new, per-session</td>
+</tr>
+<tr>
+<td>agent-memory canonical facts</td>
+<td>plaintext Markdown today</td>
+<td>no new PWA write</td>
+</tr>
+<tr>
+<td>agent-memory inbox</td>
+<td>derived digest</td>
+<td>no new PWA write</td>
+</tr>
+<tr>
+<td>continuity brief</td>
+<td>derived summary</td>
+<td>no new PWA write</td>
+</tr>
+<tr>
+<td>Active File</td>
+<td>derived clinical text</td>
+<td>no new PWA write</td>
+</tr>
+<tr>
+<td>Notion mirror</td>
+<td>third-party export</td>
+<td>always off without <code>clinical_export</code></td>
+</tr>
+<tr>
+<td>Dr. Alex backups</td>
+<td>encrypted database bundles and files</td>
+<td>no policy change in D1</td>
+</tr>
+<tr>
+<td>derived index</td>
+<td>rebuildable search data</td>
+<td>no new D1 index</td>
+</tr>
+</tbody>
+</table>
+<p>A later deletion manifest must list every sink, status, attempt, and
+receipt. It remains pending until canonical, derived, backup/restore,
+and export policies are satisfied. D1 does not claim the user-control
+product is complete.</p>
+<h2 id="m1-request-flag-hardening">9. M1 request-flag hardening</h2>
+<p>Safe current-run change:</p>
+<ul>
+<li>keep <code>include_sensitive</code> accepted for one compatibility
+version if needed;</li>
+<li>treat it only as a request for high scope, never as authority;</li>
+<li>apply the existing launch-agent authorization rule before
+high-sensitivity recall snippets and before high-sensitivity full-body
+fetch;</li>
+<li>for recall, authorize before index retrieval;</li>
+<li>for full-body fetch, resolve the canonical path, open it once
+without following symlinks, parse bounded frontmatter from that
+descriptor, authorize, then read the remaining body from the same
+descriptor;</li>
+<li>deny unauthorized high-sensitivity recall and full-body reads with
+body-free status;</li>
+<li>prevent request fields from granting roots or high scope;</li>
+<li>include the existing authorized <code>dr-alex</code> launch behavior
+in compatibility tests;</li>
+<li>replace the legacy test that allowed a general client to use
+<code>include_sensitive=true</code> with the frozen v2 denial test;</li>
+<li>create no clinical root and grant no new therapist access.</li>
+</ul>
+<p>This change is not physical clinical isolation and must not be
+described as such.</p>
+<h2 id="threat-model">10. Threat model</h2>
+<h3 id="assets">Assets</h3>
+<ul>
+<li>retained transcript bodies;</li>
+<li>reusable memories;</li>
+<li>finalization payloads;</li>
+<li>consent receipts;</li>
+<li>encryption keys;</li>
+<li>launch-identity authorization rules;</li>
+<li>deletion and backup receipts.</li>
+</ul>
+<h3 id="boundaries">Boundaries</h3>
+<ul>
+<li>browser to loopback PWA;</li>
+<li>paired device to owned session;</li>
+<li>Dr. Alex process to state database;</li>
+<li>Dr. Alex to agent-memory CLI/MCP;</li>
+<li>general process to future clinical service;</li>
+<li>local store to Notion or export target;</li>
+<li>canonical store to backups and indexes.</li>
+</ul>
+<h3 id="required-abuse-tests">Required abuse tests</h3>
+<ul>
+<li>spoofed subject or session owner;</li>
+<li>grant input from unapproved Room JavaScript;</li>
+<li>misspelled scope;</li>
+<li>expired, withdrawn, or malformed consent;</li>
+<li>durable grant without retention;</li>
+<li>telemetry disabled while consent is required;</li>
+<li>duplicate and overlapping end requests;</li>
+<li>plaintext marker search;</li>
+<li>launch-identity spoof plus crafted <code>include_sensitive</code> or
+high ceiling;</li>
+<li>unauthorized same-path knowledge;</li>
+<li>Notion export without export consent;</li>
+<li>RED session with every sink inspected;</li>
+<li>lost response followed by duplicate end;</li>
+<li>restore that contains a deleted synthetic ID.</li>
+</ul>
+<h2 id="program-stages">11. Program stages</h2>
+<ol type="1">
+<li><strong>v5 document repair.</strong> Architecture, change spec,
+threat model, tickets, independent PASS.</li>
+<li><strong>D1 disabled consent and lifecycle infrastructure.</strong>
+No new live PWA durable writer.</li>
+<li><strong>M1 request-flag hardening.</strong> No clinical root or new
+grant.</li>
+<li><strong>Human design gate.</strong> Consent copy, retention,
+clinical service identity, encrypted root, deletion, backup, and
+rollback.</li>
+<li><strong>M1 physical isolation in a new approved run.</strong>
+Synthetic evidence before live provisioning.</li>
+<li><strong>H1 disabled Hermes adapter in a new approved run.</strong>
+Body-free hook plus authorized committed-session reader.</li>
+<li><strong>Offline cross-surface parity.</strong> Synthetic data
+only.</li>
+<li><strong>Human activation gate.</strong> Live changes only if every
+earlier gate passes.</li>
+</ol>
+<h2 id="kill-criteria">12. Kill criteria</h2>
+<p>Reject or revert a candidate if:</p>
+<ul>
+<li>a protected safety file changes;</li>
+<li>raw content appears in logs or review artifacts;</li>
+<li>consent absence becomes a durable grant;</li>
+<li>transcript bodies persist under enforced deny;</li>
+<li>Room JavaScript sends an unreviewed grant;</li>
+<li>a device accesses another device-owned session;</li>
+<li>a marker or operation payload is plaintext;</li>
+<li>duplicate or overlapping finalization loses or duplicates work;</li>
+<li>request input grants high-sensitivity access;</li>
+<li>a new PWA write reaches an existing live sink;</li>
+<li>the candidate claims physical isolation without the later gate;</li>
+<li>the evaluator or threshold changes with candidate code;</li>
+<li>two consecutive candidates show no held-out gain;</li>
+<li>a frozen budget is exceeded.</li>
+</ul>
+<h2 id="architecture-acceptance">13. Architecture acceptance</h2>
+<p>This architecture passes review only when an independent verifier
+confirms:</p>
+<ul>
+<li>one subject, actor, source, consent, and status contract;</li>
+<li>no rc1 sequencing contradiction;</li>
+<li>transcript retention controls the shared persistence seam;</li>
+<li>durable memory depends on retained provenance;</li>
+<li>per-session encrypted operations replace the plaintext global marker
+for new behavior;</li>
+<li>current TUI and live PWA behavior do not change by default;</li>
+<li>M1 is described as request-flag hardening only in this run;</li>
+<li>physical clinical isolation and H1 remain later human-gated
+stages;</li>
+<li>every current sink is named;</li>
+<li>the ticket graph fits the frozen budget;</li>
+<li>no protected safety or clinical content changed.</li>
+</ul>
+</body>
+</html>

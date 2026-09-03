@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc 3.10.2" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Dr. Alex Memory Architecture v3 Frozen Evaluator</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: 1.5em;}
+    div.column{flex: auto;}
+    @media screen {
+    div.columns{gap: min(4vw, 1.5em);}
+    div.column{overflow-x: auto;}
+    }
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+  <link rel="stylesheet" href="spec.css" />
+</head>
+<body>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#dr.-alex-memory-architecture-v3-frozen-evaluator"
+id="toc-dr.-alex-memory-architecture-v3-frozen-evaluator">Dr. Alex
+Memory Architecture v3 Frozen Evaluator</a>
+<ul>
+<li><a href="#baseline-gates" id="toc-baseline-gates">Baseline
+gates</a></li>
+<li><a href="#candidate-acceptance-threshold"
+id="toc-candidate-acceptance-threshold">Candidate acceptance
+threshold</a></li>
+<li><a href="#frozen-synthetic-outcomes"
+id="toc-frozen-synthetic-outcomes">Frozen synthetic outcomes</a></li>
+<li><a href="#stop-rule" id="toc-stop-rule">Stop rule</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="dr.-alex-memory-architecture-v3-frozen-evaluator">Dr. Alex
+Memory Architecture v3 Frozen Evaluator</h1>
+<p><strong>Status:</strong> Frozen for the v3 implementation run<br />
+<strong>Fixtures:</strong> Synthetic content only<br />
+<strong>Candidate cannot edit this file or its thresholds</strong></p>
+<h2 id="baseline-gates">Baseline gates</h2>
+<ul>
+<li>Dr. Alex full suite SHALL pass with no protected safety regression
+relative to <code>e0dad8a3f6e0e7016f74c6c3d53850c9a7892e7d</code>.</li>
+<li>agent-memory full suite SHALL pass with no regression relative to
+<code>a01bc4cb9697aaeff69671d82ea2dbca1f32cd38</code>.</li>
+<li><code>memctl doctor</code> exit 7 is a carried baseline defect and
+cannot be reported as fixed without a separate measured repair.</li>
+<li>Dr. Alex crisis corpus, RED short-circuit, frozen sections,
+deterministic output gates, encryption-at-rest, and loopback controls
+SHALL remain unchanged.</li>
+<li>No test may contain private clinical text.</li>
+</ul>
+<h2 id="candidate-acceptance-threshold">Candidate acceptance
+threshold</h2>
+<p>A candidate passes only when all 63 named outcomes below pass, both
+full suites pass, protected controls do not regress, the diff stays
+within the run budget, and independent standards plus spec review report
+no blocker or major defect. A candidate that changes this evaluator, its
+expected outcomes, or its thresholds is rejected.</p>
+<h2 id="frozen-synthetic-outcomes">Frozen synthetic outcomes</h2>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>ID</th>
+<th>Scenario</th>
+<th>Required outcome</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>D1-I01</td>
+<td>valid device token</td>
+<td>matched device principal returned</td>
+</tr>
+<tr>
+<td>D1-I02</td>
+<td>revoked or unknown token</td>
+<td>null and 401</td>
+</tr>
+<tr>
+<td>D1-I03</td>
+<td>request supplies subject-like field</td>
+<td>rejected or ignored; server value wins</td>
+</tr>
+<tr>
+<td>D1-I04</td>
+<td>other device turns, checks in to, or ends session</td>
+<td>external 404</td>
+</tr>
+<tr>
+<td>D1-I05</td>
+<td>local subject repeated</td>
+<td>stable value</td>
+</tr>
+<tr>
+<td>D1-I06</td>
+<td><code>/turn</code> with missing session</td>
+<td>404; no implicit creation</td>
+</tr>
+<tr>
+<td>D1-I07</td>
+<td><code>/checkin</code> without session ID</td>
+<td>server-generated owned session</td>
+</tr>
+<tr>
+<td>D1-I08</td>
+<td><code>/checkin</code> with other-device session</td>
+<td>external 404</td>
+</tr>
+<tr>
+<td>D1-C01</td>
+<td>migrate existing v1 DB</td>
+<td>rows preserved; new tables exist</td>
+</tr>
+<tr>
+<td>D1-C02</td>
+<td>migration rerun</td>
+<td>no-op success</td>
+</tr>
+<tr>
+<td>D1-C03</td>
+<td>unknown key</td>
+<td>HTTP 422</td>
+</tr>
+<tr>
+<td>D1-C04</td>
+<td>malformed decision</td>
+<td>HTTP 422</td>
+</tr>
+<tr>
+<td>D1-C05</td>
+<td>durable without retention</td>
+<td>HTTP 422</td>
+</tr>
+<tr>
+<td>D1-C06</td>
+<td>absent consent under enforcement</td>
+<td>all durable scopes deny</td>
+</tr>
+<tr>
+<td>D1-C07</td>
+<td>grant then withdraw</td>
+<td>later resolver denies</td>
+</tr>
+<tr>
+<td>D1-C08</td>
+<td>equal timestamp</td>
+<td>higher ULID deterministically wins</td>
+</tr>
+<tr>
+<td>D1-C09</td>
+<td>malformed stored timestamp</td>
+<td>scope denied; body-free diagnostic</td>
+</tr>
+<tr>
+<td>D1-C10</td>
+<td>telemetry off</td>
+<td>consent still resolves</td>
+</tr>
+<tr>
+<td>D1-C11</td>
+<td>enforcement off plus consent input</td>
+<td>HTTP 409</td>
+</tr>
+<tr>
+<td>D1-C12</td>
+<td>unapproved consent channel</td>
+<td>HTTP 403</td>
+</tr>
+<tr>
+<td>D1-C13</td>
+<td>Room JS source scan</td>
+<td>no <code>granted</code> consent payload</td>
+</tr>
+<tr>
+<td>D1-C14</td>
+<td>latest grant expired</td>
+<td>scope resolves deny</td>
+</tr>
+<tr>
+<td>D1-C15</td>
+<td>telemetry off</td>
+<td>owner and consent tables still write through policy-state
+connection</td>
+</tr>
+<tr>
+<td>D1-T01</td>
+<td>retention granted</td>
+<td>encrypted user and assistant rows</td>
+</tr>
+<tr>
+<td>D1-T02</td>
+<td>retention denied</td>
+<td>no transcript rows; safety trace remains if enabled</td>
+</tr>
+<tr>
+<td>D1-T03</td>
+<td>existing caller omits new argument</td>
+<td>baseline behavior unchanged</td>
+</tr>
+<tr>
+<td>D1-T04</td>
+<td>transcript failure</td>
+<td>turn returns; class-only warning</td>
+</tr>
+<tr>
+<td>D1-T05</td>
+<td>RED plus retention denied</td>
+<td>no body row and no derived sink</td>
+</tr>
+<tr>
+<td>D1-T06</td>
+<td>RED plus retention granted</td>
+<td>encrypted body row, no derived sink</td>
+</tr>
+<tr>
+<td>D1-T07</td>
+<td>pending fragment drained at end under deny</td>
+<td>zero transcript rows for fragment and reply</td>
+</tr>
+<tr>
+<td>D1-F01</td>
+<td>no retention</td>
+<td><code>closed_transient</code>, no encrypted payload</td>
+</tr>
+<tr>
+<td>D1-F02</td>
+<td>retention, no durable</td>
+<td><code>finalized_no_memory_consent</code></td>
+</tr>
+<tr>
+<td>D1-F03</td>
+<td>RED retained</td>
+<td><code>finalized_red_withheld</code>, no sink</td>
+</tr>
+<tr>
+<td>D1-F04</td>
+<td>durable grant, writer disabled</td>
+<td><code>finalization_disabled</code>, no sink</td>
+</tr>
+<tr>
+<td>D1-F05</td>
+<td>synthetic writer enabled</td>
+<td>marker-free <code>complete_digest</code> runs through synthetic
+sinks</td>
+</tr>
+<tr>
+<td>D1-F06</td>
+<td>partial synthetic failure</td>
+<td>encrypted operation stays <code>recovery_pending</code></td>
+</tr>
+<tr>
+<td>D1-F07</td>
+<td>duplicate end after response loss</td>
+<td>same operation and receipt</td>
+</tr>
+<tr>
+<td>D1-F08</td>
+<td>overlapping sessions</td>
+<td>separate rows; no overwrite</td>
+</tr>
+<tr>
+<td>D1-F09</td>
+<td>persisted-file scan</td>
+<td>no synthetic body or digest plaintext</td>
+</tr>
+<tr>
+<td>D1-F10</td>
+<td>consent withdrawn before replay</td>
+<td>unfinished derived steps stop</td>
+</tr>
+<tr>
+<td>D1-F11</td>
+<td>policy version changes</td>
+<td>completed session not re-extracted</td>
+</tr>
+<tr>
+<td>D1-F12</td>
+<td>pending response</td>
+<td>HTTP 202, <code>ok=false</code>, <code>complete=false</code></td>
+</tr>
+<tr>
+<td>D1-F13</td>
+<td>concurrent end on same session</td>
+<td>one row; one lease; both responses reference same operation</td>
+</tr>
+<tr>
+<td>D1-F14</td>
+<td>pending duplicate end</td>
+<td>one caller resumes unfinished steps; no duplicate sink</td>
+</tr>
+<tr>
+<td>D1-F15</td>
+<td>writer enabled without runner</td>
+<td><code>finalization_unavailable</code>, HTTP 503</td>
+</tr>
+<tr>
+<td>D1-F16</td>
+<td>legacy plaintext TUI marker fixture</td>
+<td>load succeeds; next save contains <code>digest_enc</code> only</td>
+</tr>
+<tr>
+<td>D1-F17</td>
+<td>TUI marker decryption failure</td>
+<td>recovery stays visibly pending; class-only log</td>
+</tr>
+<tr>
+<td>D1-S01</td>
+<td>full baseline suite</td>
+<td>exit 0; same skips allowed</td>
+</tr>
+<tr>
+<td>D1-S02</td>
+<td>immutable safety hashes</td>
+<td>unchanged</td>
+</tr>
+<tr>
+<td>D1-S03</td>
+<td>TUI source diff</td>
+<td>no behavioral call-site change</td>
+</tr>
+<tr>
+<td>D1-S04</td>
+<td>one-shot source diff</td>
+<td>no durable-memory addition</td>
+</tr>
+<tr>
+<td>D1-S05</td>
+<td>default config PWA</td>
+<td>no new durable sink or operation</td>
+</tr>
+<tr>
+<td>M1-A01</td>
+<td>general launch plus high recall plus
+<code>include_sensitive=true</code></td>
+<td>authorization denied before retrieval</td>
+</tr>
+<tr>
+<td>M1-A02</td>
+<td>general launch plus high full body plus
+<code>include_sensitive=true</code></td>
+<td>authorization denied before body return</td>
+</tr>
+<tr>
+<td>M1-A03</td>
+<td>approved existing launch plus high recall and body</td>
+<td>current authorized behavior preserved</td>
+</tr>
+<tr>
+<td>M1-A04</td>
+<td>low and medium recall and bodies</td>
+<td>current behavior preserved</td>
+</tr>
+<tr>
+<td>M1-A05</td>
+<td>crafted request agent, root, tag, filter, ceiling, or flag</td>
+<td>cannot grant high scope</td>
+</tr>
+<tr>
+<td>M1-A06</td>
+<td>refusal log scan</td>
+<td>no query, snippet, or body marker</td>
+</tr>
+<tr>
+<td>M1-A07</td>
+<td>legacy general-client opt-in test</td>
+<td>replaced by frozen v2 denial expectation before code</td>
+</tr>
+<tr>
+<td>M1-A08</td>
+<td>full updated suite</td>
+<td>baseline count adjusted only for the deliberate security
+expectation; all unrelated tests pass</td>
+</tr>
+<tr>
+<td>M1-A09</td>
+<td>high full-body denial</td>
+<td>body bytes after frontmatter delimiter are never read</td>
+</tr>
+<tr>
+<td>M1-A10</td>
+<td>oversized or missing frontmatter delimiter</td>
+<td><code>metadata_unreadable</code>, no body return</td>
+</tr>
+<tr>
+<td>M1-A11</td>
+<td>file changed during authorization</td>
+<td>same descriptor prevents path-swap disclosure</td>
+</tr>
+</tbody>
+</table>
+<h2 id="stop-rule">Stop rule</h2>
+<ul>
+<li>Reject after two consecutive candidates without held-out
+improvement.</li>
+<li>Stop at the first run-budget limit.</li>
+<li>Do not change a test outcome, threshold, or protected control to
+obtain PASS.</li>
+</ul>
+</body>
+</html>

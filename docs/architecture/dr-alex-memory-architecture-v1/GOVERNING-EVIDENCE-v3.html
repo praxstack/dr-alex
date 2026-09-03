@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc 3.10.2" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Dr. Alex Memory Architecture v3 Governing Evidence</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: 1.5em;}
+    div.column{flex: auto;}
+    @media screen {
+    div.columns{gap: min(4vw, 1.5em);}
+    div.column{overflow-x: auto;}
+    }
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+  <link rel="stylesheet" href="spec.css" />
+</head>
+<body>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#dr.-alex-memory-architecture-v3-governing-evidence"
+id="toc-dr.-alex-memory-architecture-v3-governing-evidence">Dr. Alex
+Memory Architecture v3 Governing Evidence</a>
+<ul>
+<li><a href="#evidence-precedence" id="toc-evidence-precedence">1.
+Evidence precedence</a></li>
+<li><a href="#pinned-source-baselines"
+id="toc-pinned-source-baselines">2. Pinned source baselines</a></li>
+<li><a href="#verified-current-state" id="toc-verified-current-state">3.
+Verified current state</a></li>
+<li><a href="#human-approved-safety-requirements"
+id="toc-human-approved-safety-requirements">4. Human-approved safety
+requirements</a></li>
+<li><a href="#authorized-increment" id="toc-authorized-increment">5.
+Authorized increment</a></li>
+<li><a href="#prohibited-increment" id="toc-prohibited-increment">6.
+Prohibited increment</a></li>
+<li><a href="#later-human-gates" id="toc-later-human-gates">7. Later
+human gates</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="dr.-alex-memory-architecture-v3-governing-evidence">Dr. Alex
+Memory Architecture v3 Governing Evidence</h1>
+<p><strong>Status:</strong> Human-approved content-free baseline<br />
+<strong>Approved:</strong> 2026-08-23<br />
+<strong>Supersedes as governing input:</strong> the two restricted
+narrative reports<br />
+<strong>Privacy rule:</strong> no conversation bodies, clinical
+excerpts, inferred biography, or identifying case details</p>
+<h2 id="evidence-precedence">1. Evidence precedence</h2>
+<ol type="1">
+<li>This human-approved content-free baseline.</li>
+<li>Pinned current source and executable synthetic tests.</li>
+<li>Current-state addenda when they conflict with older narrative
+prose.</li>
+<li>The original restricted reports as historical clinical references
+only.</li>
+</ol>
+<p>Source observations may refine current-state claims. They may not
+weaken these safety requirements.</p>
+<h2 id="pinned-source-baselines">2. Pinned source baselines</h2>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr>
+<th>System</th>
+<th>Commit</th>
+<th>Governing use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Dr. Alex</td>
+<td><code>e0dad8a3f6e0e7016f74c6c3d53850c9a7892e7d</code></td>
+<td>runtime, safety, lifecycle, and tests</td>
+</tr>
+<tr>
+<td>agent-memory</td>
+<td><code>a01bc4cb9697aaeff69671d82ea2dbca1f32cd38</code></td>
+<td>canonical store, retrieval, authorization, and tests</td>
+</tr>
+<tr>
+<td>Hermes</td>
+<td><code>d5281f59819d2ea2ce6754faec2ce317c92366c8</code></td>
+<td>profile/session lifecycle reference only; no edits authorized</td>
+</tr>
+<tr>
+<td>therapy-stack</td>
+<td><code>9ce6054195366eb57b414ecd51b087487cdd22c5</code></td>
+<td>historical reference only</td>
+</tr>
+</tbody>
+</table>
+<h2 id="verified-current-state">3. Verified current state</h2>
+<ol type="1">
+<li>TUI, one-shot CLI, and alexd share the same safety-first turn
+engine.</li>
+<li>The TUI conditionally invokes the existing durable finalizer and
+recovery path.</li>
+<li>PWA <code>/session/end</code> closes telemetry and in-memory state
+but does not invoke equivalent durable fan-out.</li>
+<li>The ordinary PWA UI has no proven reachable End Session flow.</li>
+<li>One-shot CLI has no reusable-memory finalization contract.</li>
+<li>Hermes persists profile-local sessions, but Telegram and desktop
+remain separate session threads.</li>
+<li>Manual agent-memory MCP availability does not prove automatic
+lifecycle capture.</li>
+<li>Hermes’ finalization hook is body-free and cannot supply transcript
+content by itself.</li>
+<li>agent-memory uses Markdown as canonical authority and rebuildable
+derived indexes.</li>
+<li>Request <code>include_sensitive=true</code> can currently expose
+high-sensitivity recall snippets and full bodies without the intended
+launch-identity authorization.</li>
+<li>Default and therapist Hermes profiles currently point to the same
+physical agent-memory root.</li>
+<li>Process-local client naming is not a clinical-grade identity
+boundary.</li>
+<li>Live semantic retrieval is inactive; lexical recall remains
+available.</li>
+<li><code>memctl doctor</code> exits 7 because of carried operational
+defects. The store can still serve, but it does not satisfy its full
+acceptance contract.</li>
+<li>Existing destination idempotency has a crash window between
+canonical mutation and receipt/ledger persistence.</li>
+</ol>
+<h2 id="human-approved-safety-requirements">4. Human-approved safety
+requirements</h2>
+<ol type="1">
+<li>Current-turn deterministic triage runs before retrieval,
+persistence, distillation, or network-dependent work.</li>
+<li>Every supported surface executes the same RED classifier and local
+short-circuit. Human escalation is additive.</li>
+<li>Message receipt authorizes transient processing only.</li>
+<li>Transcript retention, durable memory, cross-context recall, and
+export require explicit scope-specific consent.</li>
+<li>Non-consented sessions produce no durable body, summary, reusable
+fact, inbox note, continuity artifact, or external mirror under the
+enforced profile.</li>
+<li>PWA sessions bind to authenticated paired-device actors
+independently of consent.</li>
+<li>High-sensitivity recall and full-body reads require authenticated
+runtime authority. Request fields never grant authority.</li>
+<li>Clinical storage requires a separately encrypted physical boundary
+and an identity stronger than a process-local client name before
+activation.</li>
+<li>Canonical records remain separate from summaries, indexes,
+embeddings, and graph projections. Derived layers remain
+rebuildable.</li>
+<li>User erasure overrides archive-by-default. Clinical data must not
+remain recoverable from Git history, indexes, WAL, caches, backups, or
+restore manifests before activation.</li>
+<li>Real clinical migration and live activation require separate
+human-approved operations with rollback and non-resurrection
+evidence.</li>
+<li>The encrypted standalone PWA remains available until replacement
+confidentiality, lifecycle, consent, deletion, backup/restore, and
+response-parity gates pass.</li>
+<li>Tests, fixtures, logs, tickets, and review packets use synthetic
+content only.</li>
+</ol>
+<h2 id="authorized-increment">5. Authorized increment</h2>
+<p>This run may implement only:</p>
+<ul>
+<li>always-on PWA session ownership;</li>
+<li>default-off consent receipts and transcript policy;</li>
+<li>encrypted legacy marker migration;</li>
+<li>per-session encrypted synthetic finalization operations with no live
+sink;</li>
+<li>a marker-free shared completion seam;</li>
+<li>denial of request-flag authority for high-sensitivity recall and
+full-body access;</li>
+<li>focused synthetic tests, local documentation, and local
+commits.</li>
+</ul>
+<h2 id="prohibited-increment">6. Prohibited increment</h2>
+<p>This run may not:</p>
+<ul>
+<li>create or activate a clinical root, key, OS identity, daemon,
+socket, or live policy;</li>
+<li>add Hermes transcript integration;</li>
+<li>migrate, copy, decrypt, delete, or purge real clinical data;</li>
+<li>change Telegram, gateway, cron, credentials, backups, therapist
+profile, or live services;</li>
+<li>claim universal continuity, physical clinical isolation, deletion
+completion, or product activation;</li>
+<li>send the restricted source reports or their private contents to
+external reviewers.</li>
+</ul>
+<h2 id="later-human-gates">7. Later human gates</h2>
+<p>The following require new governing contracts:</p>
+<ul>
+<li>PWA End Session UX and idle expiry;</li>
+<li>clinical OS identity and encrypted-root provisioning;</li>
+<li>canonical destination replay repair for a live writer;</li>
+<li>user inspect, correct, forget, export, and reset controls;</li>
+<li>physical deletion and restore non-resurrection;</li>
+<li>Hermes integration and cross-surface identity;</li>
+<li>real-data migration and activation.</li>
+</ul>
+</body>
+</html>

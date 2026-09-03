@@ -18,6 +18,7 @@ by returning empty state rather than raising.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 import threading
@@ -25,9 +26,10 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from dr_alex import paths
+from dr_alex import crypto, paths
 
 _STATE_RELPATH = ("data", "session_state.json")
+_log = logging.getLogger(__name__)
 
 #: Serializes every read-modify-write of the state file. The TUI runs
 #: ``fanout.recover_if_needed`` on a Textual ``@work(thread=True)`` worker while the main
@@ -60,6 +62,7 @@ class UnfinalizedMarker:
     remembered: list[int] = field(default_factory=list)  # indices of durable facts written
     inbox_written: bool = False
     continuity_written: bool = False
+    mirror_written: bool = False
 
 
 @dataclass
@@ -72,8 +75,21 @@ class SessionState:
     def marker(self) -> UnfinalizedMarker | None:
         if not self.unfinalized:
             return None
+        payload = dict(self.unfinalized)
+        if "digest_enc" in payload:
+            token = payload.pop("digest_enc")
+            try:
+                if not isinstance(token, str):
+                    raise TypeError("digest token must be text")
+                digest = json.loads(crypto.decrypt(token.encode("ascii")) or "")
+                if not isinstance(digest, dict):
+                    raise TypeError("digest payload must be an object")
+                payload["digest"] = digest
+            except (crypto.CryptoError, UnicodeError, TypeError, ValueError) as exc:
+                _log.warning("unfinalized marker decrypt failed: %s", type(exc).__name__)
+                return None
         try:
-            return UnfinalizedMarker(**self.unfinalized)
+            return UnfinalizedMarker(**payload)
         except (TypeError, ValueError):
             return None
 
@@ -115,7 +131,21 @@ def save(state: SessionState, path: Path | None = None) -> None:
             os.chmod(p.parent, 0o700)
         except OSError:
             pass
-        payload = json.dumps(asdict(state), ensure_ascii=False, indent=2)
+        serialized = asdict(state)
+        marker = serialized.get("unfinalized")
+        if isinstance(marker, dict) and "digest" in marker:
+            digest = marker.pop("digest")
+            digest_json = json.dumps(
+                digest,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            digest_enc = crypto.encrypt(digest_json)
+            if digest_enc is None:
+                raise RuntimeError("digest encryption returned no token")
+            marker["digest_enc"] = digest_enc.decode("ascii")
+        payload = json.dumps(serialized, ensure_ascii=False, indent=2)
         fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=".session_state.", suffix=".tmp")
         closed = False
         try:

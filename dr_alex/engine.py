@@ -16,7 +16,7 @@ The turn pipeline (council-vetted order):
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -279,6 +279,7 @@ def record_turn_telemetry(
     now: datetime | None = None,
     built_prompt: str | None = None,
     transcript_policy: str = "legacy",
+    transcript_policy_resolver: Callable[[], str] | None = None,
 ) -> None:
     """Persist the G9 turn trace + encrypted transcript, and flag an empty-reply malfunction.
 
@@ -290,6 +291,13 @@ def record_turn_telemetry(
     # re-reading persona/continuity from disk and hashing the WRONG prompt (D9). Only fall
     # back to a fresh build when a caller did not supply one.
     sp = built_prompt if built_prompt is not None else system_prompt()
+    effective_transcript_policy = transcript_policy
+    if transcript_policy_resolver is not None:
+        try:
+            effective_transcript_policy = transcript_policy_resolver()
+        except Exception as exc:  # noqa: BLE001 — policy failure must deny body persistence
+            _trace_log.warning("transcript policy resolution failed: %s", type(exc).__name__)
+            effective_transcript_policy = "deny"
     try:
         statedb.record_turn_trace(
             session_id=session_id,
@@ -302,7 +310,7 @@ def record_turn_telemetry(
             register_action=outcome.register_action if outcome else "clean",
             now=now,
         )
-        if transcript_policy in ("legacy", "retain"):
+        if effective_transcript_policy in ("legacy", "retain"):
             test_traffic = telemetry.is_test_traffic()
             statedb.record_transcript(
                 session_id=session_id,
@@ -321,6 +329,11 @@ def record_turn_telemetry(
                     is_test_traffic=test_traffic,
                     now=now,
                 )
+        else:
+            _trace_log.info(
+                "event=transcript_retention source=pwa status=skipped skipped_count=%d",
+                1 + bool(reply_text),
+            )
         # G10: a visibly empty delivered reply is a malfunction — queue one ack for next start.
         if not reply_text or not reply_text.strip() or reply_text.strip() == "(no response)":
             telemetry.note_malfunction("empty_reply", session_id=session_id, now=now)
@@ -362,6 +375,7 @@ def run_turn(
     memory_ids: list[str] | None = None,
     generate_fn=None,
     transcript_policy: str = "legacy",
+    transcript_policy_resolver: Callable[[], str] | None = None,
 ) -> TurnOutcome:
     """THE single safety-first turn, shared by the TUI, the one-shot CLI, and ``alexd``.
 
@@ -402,6 +416,7 @@ def run_turn(
             now=now,
             built_prompt=system_prompt_override,
             transcript_policy=transcript_policy,
+            transcript_policy_resolver=transcript_policy_resolver,
         )
         return TurnOutcome(tier=tier, text=red_text, safety_action="red-card")
 
@@ -478,6 +493,7 @@ def run_turn(
         now=now,
         built_prompt=sp,
         transcript_policy=transcript_policy,
+        transcript_policy_resolver=transcript_policy_resolver,
     )
     return TurnOutcome(
         tier=tier,

@@ -1,0 +1,26 @@
+# D1 Ticket 03 v5.1 Progress
+
+- 2026-08-25T15:07 IST · lead · INTAKE · Human approved delivered D1 01–02 + M1-A, approved a new contract version raising the line cap for ticket 03, and directed local/unmerged work. Merge, push, activation remain human-gated.
+- 2026-08-25T15:07 IST · lead · SKILL_DISCOVERED · Loaded to-spec, to-tickets, implement, coding-agent-leadership-principles, code-review, software-development/systematic-debugging, autonomous-orchestrion-v6, autonomous-orchestrion.
+- 2026-08-25T15:08 IST · lead · ASSUMPTION · “All Approved” means build ticket 03 under an amended contract but keep all branches local/unmerged; no conflict because merge/push/activation are explicitly human-gated.
+- 2026-08-25T15:09 IST · lead · DECISION · New cap is 2,100 net implementation+test lines from baseline e0dad8a3. This covers current 1,483 plus the 425–467 estimate and 150–192 contingency, without editing frozen v5 governing files.
+- 2026-08-25T15:10 IST · lead · SPEC · Wrote SPEC-ticket03-v5.1.md from authoritative CHANGE-SPEC/EVALUATOR requirements.
+- 2026-08-25T15:11 IST · lead · TASKS · Split into 03A store/config, 03B marker-free fanout, 03C wrapper, 03D HTTP+verification; wrote prd-v5.1.json.
+- 2026-08-25T15:11 IST · lead · PHASE_ENTER · Atom 03A. Intent: reuse statedb policy connection + existing crypto; falsifier: schema/encryption/concurrency regressions fail; reversible: repo-only branch edits.
+- 2026-08-26 · lead · DECISION · Corrected the initial horizontal split into four vertical tracer bullets before implementation: terminal receipts; one synthetic completion; recovery/concurrency; legacy-marker compatibility/full closure.
+- 2026-08-26 · lead · RED · F01 duplicate End reproduced the missing durable receipt: first HTTP 200, second HTTP 404.
+- 2026-08-26 · lead · GREEN · Added one body-free terminal-operation seam and retry lookup; focused F01 passed.
+- 2026-08-26 · lead · RED · F02–F04 all reached the deliberate missing-durable-path RuntimeError; this isolated status selection as the next missing behavior.
+- 2026-08-26 · lead · GREEN · Implemented terminal priority no-retention → RED → no-durable → writer-disabled; finalization file passed 5 tests.
+- 2026-08-26 · lead · RED · A RED turn followed by GREEN raised AttributeError because RoomSession had no risk_tier_max accumulator.
+- 2026-08-26 · lead · GREEN · Added monotonic GREEN/AMBER/RED max tracking; finalization file passed 6 tests and adjacent identity/consent verification passed 61 tests.
+- 2026-08-26 · lead · ANOMALY · A read-only git-status/line-budget terminal command was blocked after approval timeout; it was not retried and no destructive action followed.
+- 2026-08-26 · lead · SPAWN · Dispatched independent 03A standards and exact-spec reviews; no commit until both return and actionable findings are closed.
+- 2026-08-26 · lead · TEST · Existing shared-seam suites passed: fanout + statedb + statefile, 28 tests.
+- 2026-08-26 · lead · RED · With durable writer enabled and no synthetic runner, End incorrectly returned the disabled terminal path instead of an encrypted retryable 503 operation.
+- 2026-08-26 · lead · GREEN · Added false-default durable-finalization config, encrypted payload persistence, unavailable HTTP mapping; focused no-runner test passed.
+- 2026-08-26 · lead · RED · Synthetic seams were ignored; operation stayed HTTP 503 on both End attempts.
+- 2026-08-26 · lead · GREEN · Extracted marker-free complete_digest with an injected step-persistence callback; synthetic-only run finalized once, erased payload, returned stable receipt; legacy fanout stayed green.
+- 2026-08-26 · lead · TEST · Full current finalization + legacy fanout scope passed 17 tests; Ruff passed.
+- 2026-08-26 · lead · SOURCE · Paired agent-memory memctl provides native --idempotency-key with same-key/same-payload replay under StoreLock; selected for 03C deterministic memory writes.
+- 2026-08-26 · lead · SPAWN · Froze 03A+03B candidate and dispatched fresh standards and exact-spec reviews; no candidate mutation while they run.

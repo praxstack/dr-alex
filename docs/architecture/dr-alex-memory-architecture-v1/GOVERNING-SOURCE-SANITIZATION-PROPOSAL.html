@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc 3.10.2" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Governing Source Sanitization Proposal</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: 1.5em;}
+    div.column{flex: auto;}
+    @media screen {
+    div.columns{gap: min(4vw, 1.5em);}
+    div.column{overflow-x: auto;}
+    }
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+  <link rel="stylesheet" href="spec.css" />
+</head>
+<body>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#governing-source-sanitization-proposal"
+id="toc-governing-source-sanitization-proposal">Governing source
+sanitization proposal</a>
+<ul>
+<li><a href="#requested-decision" id="toc-requested-decision">Requested
+decision</a></li>
+<li><a href="#proposed-source-classes"
+id="toc-proposed-source-classes">Proposed source classes</a></li>
+<li><a href="#proposed-precedence" id="toc-proposed-precedence">Proposed
+precedence</a></li>
+<li><a href="#content-free-governing-requirements"
+id="toc-content-free-governing-requirements">Content-free governing
+requirements</a></li>
+<li><a href="#scope-of-the-replacement-run"
+id="toc-scope-of-the-replacement-run">Scope of the replacement
+run</a></li>
+<li><a href="#approval-effect" id="toc-approval-effect">Approval
+effect</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="governing-source-sanitization-proposal">Governing source
+sanitization proposal</h1>
+<p><strong>Status:</strong> Proposal only; not approved; does not
+replace the frozen run contract<br />
+<strong>Decision owner:</strong> Human activation and
+clinical-governance authority<br />
+<strong>Reason:</strong> The frozen therapist audit contains private
+clinical excerpts and stale current-state statements. It must not be
+propagated into prompts, tickets, Git history, or external review
+packets.</p>
+<h2 id="requested-decision">Requested decision</h2>
+<p>Approve creation of a new content-free governing evidence set and a
+new run-contract version. Until approval, RC3 remains review-blocked and
+no tickets, implementation, migration, activation, deletion, Telegram
+operation, or live configuration change may proceed.</p>
+<h2 id="proposed-source-classes">Proposed source classes</h2>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr>
+<th>Source class</th>
+<th>Treatment</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Original therapist audit</td>
+<td>Restricted clinical source. Preserve in place. Do not copy, quote,
+publish, or send to external reviewers.</td>
+</tr>
+<tr>
+<td>Original architecture review</td>
+<td>Restricted reference. Preserve in place. Use only to derive
+content-free requirements.</td>
+</tr>
+<tr>
+<td>Content-free current-state verification</td>
+<td>New governing input. Contains only system topology, control status,
+source locators, hashes, and synthetic acceptance requirements.</td>
+</tr>
+<tr>
+<td>Source-code and test evidence</td>
+<td>Governing implementation evidence at pinned repository commits. No
+conversation bodies.</td>
+</tr>
+<tr>
+<td>Review receipts</td>
+<td>Stored outside candidate hashes. Findings, verdicts, and evidence
+locators only.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="proposed-precedence">Proposed precedence</h2>
+<ol type="1">
+<li>Human-approved content-free governing requirements.</li>
+<li>Pinned current source and executable synthetic tests.</li>
+<li>Current-state addenda when they conflict with older report
+prose.</li>
+<li>Original restricted reports as historical context only.</li>
+</ol>
+<p>A source-code observation may refine current-state claims. It may not
+weaken a human-owned clinical safety requirement.</p>
+<h2 id="content-free-governing-requirements">Content-free governing
+requirements</h2>
+<ol type="1">
+<li>Current-turn deterministic safety triage runs before retrieval,
+persistence, distillation, or network-dependent work.</li>
+<li>Every supported surface executes the same RED classifier and local
+short-circuit. Human escalation is additive.</li>
+<li>Message receipt authorizes transient processing only. Transcript
+retention, durable memory, recall across contexts, and export require
+explicit scope-specific consent.</li>
+<li>Non-consented sessions produce no durable body, summary, reusable
+fact, inbox note, continuity artifact, or external mirror.</li>
+<li>PWA sessions are bound to authenticated paired-device actors
+independently of consent.</li>
+<li>High-sensitivity recall and full-body reads require authenticated
+runtime authority. Request fields never grant authority.</li>
+<li>Clinical storage requires a separately encrypted physical boundary
+and a stronger identity than a process-local client name before
+activation.</li>
+<li>Canonical records remain separate from summaries, indexes,
+embeddings, and graph projections. Derived layers remain
+rebuildable.</li>
+<li>User erasure overrides archive-by-default. Clinical data must not
+remain recoverable from Git history, indexes, WAL, caches, backups, or
+restore manifests before activation.</li>
+<li>Real clinical migration and live activation require separate
+human-approved operations with rollback and non-resurrection
+evidence.</li>
+<li>The encrypted standalone PWA remains available until replacement
+confidentiality, lifecycle, consent, deletion, backup/restore, and
+response-parity gates pass.</li>
+<li>Tests and reviews use synthetic content only.</li>
+</ol>
+<h2 id="scope-of-the-replacement-run">Scope of the replacement run</h2>
+<p>The replacement contract should authorize only:</p>
+<ul>
+<li>always-on PWA session ownership;</li>
+<li>default-off, consent-aware transcript policy;</li>
+<li>encrypted legacy marker migration;</li>
+<li>marker-free synthetic finalization tests with no live sink;</li>
+<li>denial of request-flag authority for high-sensitivity recall and
+full-body access;</li>
+<li>local documentation and test receipts.</li>
+</ul>
+<p>It should continue to prohibit:</p>
+<ul>
+<li>clinical-root creation or activation;</li>
+<li>Hermes transcript integration;</li>
+<li>real-data migration;</li>
+<li>deletion or purge of live records;</li>
+<li>Telegram, gateway, cron, credential, key, backup, or profile
+changes;</li>
+<li>claims of universal continuity or physical isolation.</li>
+</ul>
+<h2 id="approval-effect">Approval effect</h2>
+<p>Approval does not approve implementation or activation. It only
+authorizes replacing the sensitive evidence baseline with the
+content-free set and issuing a new versioned run contract. The new
+candidate must then receive a fresh independent review against its exact
+hashes before tickets or code work begin.</p>
+</body>
+</html>
