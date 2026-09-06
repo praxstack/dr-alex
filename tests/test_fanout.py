@@ -258,3 +258,49 @@ def test_should_finalize_rules() -> None:
     assert fanout.should_finalize(1, explicit_close=True) is True
     assert fanout.should_finalize(2, explicit_close=False) is False
     assert fanout.should_finalize(3, explicit_close=False) is True
+
+
+@pytest.mark.parametrize("crash", [False, True])
+def test_canonical_record_failure_keeps_recovery_until_local_write_succeeds(
+    tmp_path, monkeypatch, crash
+) -> None:
+    from dr_alex import config, records
+
+    sp = tmp_path / "state.json"
+    rec = _Recorder()
+    seams, continuity_writes, inbox = _seams(tmp_path, remember=rec)
+    original_write = records.update_from_digest
+
+    def fail_write(digest):
+        if crash:
+            raise KeyboardInterrupt()
+        raise OSError("synthetic record disk failure")
+
+    monkeypatch.setattr(records, "update_from_digest", fail_write)
+    kwargs = dict(
+        session_id="sess1", started_at="t", risk_tier_max="GREEN", now=_now(),
+        distill_fn=lambda *a, **k: _digest(), state_path=sp, **seams,
+    )
+    if crash:
+        with pytest.raises(KeyboardInterrupt):
+            fanout.finalize_session([("user", "synthetic input")], **kwargs)
+    else:
+        result = fanout.finalize_session([("user", "synthetic input")], **kwargs)
+        assert result.active_file_path is None
+    pending = statefile.load(sp)
+    assert pending.marker() is not None
+    assert pending.last_session_at is None
+    assert pending.continuity_generated_at is None
+
+    # Local success is sufficient when the optional network mirror is disabled.
+    monkeypatch.setattr(records, "update_from_digest", original_write)
+    result = fanout.recover_if_needed(state_path=sp, **seams)
+    assert result.active_file_path == str(config.active_file_path())
+    assert result.notion_op is None
+    assert statefile.load(sp).marker() is None
+    assert len(rec.bodies) == 2
+    assert continuity_writes == ["brief text"]
+    assert len(list(inbox.glob("*.md"))) == 1
+    text = config.active_file_path().read_text()
+    assert fanout.recover_if_needed(state_path=sp, **seams) is None
+    assert config.active_file_path().read_text() == text

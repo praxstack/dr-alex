@@ -137,7 +137,12 @@ def complete(
     # transient remember/scrub failure must NOT be swallowed by unconditionally clearing the
     # marker — leave it so the next session-start recover_if_needed replays the missing steps
     # (each is idempotent, so replay never duplicates a memory or inbox file).
+    # Keep recovery available until local truth is written. A failed optional Notion
+    # mirror does not prevent completion of the local record.
+    active_path, notion_op = _mirror_canonical(digest, mirror_fn=mirror_fn)
     incomplete = _fanout_incomplete(marker, digest, is_red)
+    if not active_path:
+        incomplete.append("canonical local record not written")
     if incomplete:
         _log.warning(
             "session-end fan-out INCOMPLETE for %s: %s — marker kept for crash-safe replay "
@@ -145,10 +150,6 @@ def complete(
             marker.session_id, "; ".join(incomplete),
         )
     _finalize_state(marker, digest, state_path, keep_marker=bool(incomplete))
-
-    # Phase 6 — canonical local record FIRST (local truth), THEN the Notion mirror. Both are
-    # idempotent (session_id-keyed) and strictly best-effort: neither may break session end.
-    active_path, notion_op = _mirror_canonical(digest, mirror_fn=mirror_fn)
 
     return FanoutResult(
         session_id=marker.session_id,
