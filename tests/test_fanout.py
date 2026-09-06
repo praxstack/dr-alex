@@ -304,3 +304,43 @@ def test_canonical_record_failure_keeps_recovery_until_local_write_succeeds(
     text = config.active_file_path().read_text()
     assert fanout.recover_if_needed(state_path=sp, **seams) is None
     assert config.active_file_path().read_text() == text
+
+
+def test_unreadable_canonical_record_preserves_human_sections_and_pending_recovery(
+    tmp_path, monkeypatch
+) -> None:
+    from pathlib import Path
+    from dr_alex import config, records
+
+    target = records.ensure_scaffold()
+    original = target.read_text().replace(
+        "_No named patterns yet — Prax and Shreya name them here as they emerge._",
+        "### SYNTHETIC human-owned pattern\nPreserve this exact text.",
+    )
+    target.write_text(original)
+    sp = tmp_path / "state.json"
+    seams, continuity_writes, inbox = _seams(tmp_path)
+    real_read = Path.read_text
+
+    def fail_active_read(self, *args, **kwargs):
+        if self == target:
+            raise PermissionError("synthetic record read failure")
+        return real_read(self, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "read_text", fail_active_read)
+        result = fanout.finalize_session(
+            [("user", "synthetic input")], session_id="sess1", started_at="t",
+            risk_tier_max="GREEN", now=_now(), distill_fn=lambda *a, **k: _digest(),
+            state_path=sp, **seams,
+        )
+    assert target.read_text() == original
+    assert result.active_file_path is None
+    assert statefile.load(sp).marker() is not None
+    assert statefile.load(sp).last_session_at is None
+    result = fanout.recover_if_needed(state_path=sp, **seams)
+    assert result.active_file_path == str(config.active_file_path())
+    assert "### SYNTHETIC human-owned pattern\nPreserve this exact text." in target.read_text()
+    assert statefile.load(sp).marker() is None
+    assert continuity_writes == ["brief text"]
+    assert len(list(inbox.glob("*.md"))) == 1
