@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import types
 
@@ -25,15 +26,15 @@ def _fake_completed(stdout: str = "", stderr: str = "", returncode: int = 0):
 
 
 def test_env_override_for_binary(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(llm.CLAUDE_BIN_ENV, "/custom/claude")
-    assert llm.claude_bin() == "/custom/claude"
-    assert llm.claude_available() is True
+    monkeypatch.setenv(llm.PYTHON_ENV, "/custom/python")
+    assert llm.model_python() == "/custom/python"
+    assert llm.model_available() is True
 
 
 def test_missing_binary_reports_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv(llm.CLAUDE_BIN_ENV, raising=False)
-    monkeypatch.setattr(llm.shutil, "which", lambda _name: None)
-    assert llm.claude_available() is False
+    monkeypatch.delenv(llm.PYTHON_ENV, raising=False)
+    monkeypatch.setattr(llm, "model_python", lambda: None)
+    assert llm.model_available() is False
 
 
 # ---------------------------------------------------------------------------
@@ -41,9 +42,9 @@ def test_missing_binary_reports_unavailable(monkeypatch: pytest.MonkeyPatch) -> 
 # ---------------------------------------------------------------------------
 
 
-def test_generate_when_claude_missing_is_graceful(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv(llm.CLAUDE_BIN_ENV, raising=False)
-    monkeypatch.setattr(llm.shutil, "which", lambda _name: None)
+def test_generate_when_transport_missing_is_graceful(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(llm.PYTHON_ENV, raising=False)
+    monkeypatch.setattr(llm, "model_python", lambda: None)
 
     result = llm.generate(_msgs(), Tier.GREEN, system_prompt="sys")
     assert result.ok is False
@@ -54,12 +55,19 @@ def test_generate_when_claude_missing_is_graceful(monkeypatch: pytest.MonkeyPatc
 
 
 def test_generate_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(llm.CLAUDE_BIN_ENV, "/fake/claude")
+    monkeypatch.setenv(llm.PYTHON_ENV, "/fake/python")
 
     def fake_run(cmd, **kwargs):
-        assert "/fake/claude" in cmd[0]
-        assert "--append-system-prompt" in cmd
-        return _fake_completed(stdout="  Hey Prax, I'm here.  \n")
+        assert "/fake/python" in cmd[0]
+        assert cmd[-1].endswith("subscription_backend.py")
+        assert "sys" not in cmd
+        payload = json.loads(kwargs["input"])
+        assert payload["system_prompt"] == "sys"
+        assert payload["model"] == "gpt-5.6-sol"
+        assert "Prax: hi" in payload["prompt"]
+        return _fake_completed(
+            stdout=json.dumps({"ok": True, "text": "  Hey Prax, I'm here.  \n", "error_code": None})
+        )
 
     monkeypatch.setattr(llm.subprocess, "run", fake_run)
     result = llm.generate(_msgs(), Tier.AMBER, system_prompt="sys")
@@ -69,19 +77,21 @@ def test_generate_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_generate_nonzero_exit_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(llm.CLAUDE_BIN_ENV, "/fake/claude")
+    monkeypatch.setenv(llm.PYTHON_ENV, "/fake/python")
     monkeypatch.setattr(
-        llm.subprocess, "run",
+        llm.subprocess,
+        "run",
         lambda cmd, **kw: _fake_completed(stdout="", stderr="boom", returncode=1),
     )
     result = llm.generate(_msgs(), Tier.GREEN, system_prompt="sys")
     assert result.ok is False
     assert result.used_fallback is True
-    assert result.error == "boom"
+    assert result.error == "model transport exited 1"
+    assert "boom" not in result.text
 
 
 def test_generate_timeout_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(llm.CLAUDE_BIN_ENV, "/fake/claude")
+    monkeypatch.setenv(llm.PYTHON_ENV, "/fake/python")
 
     def fake_run(cmd, **kwargs):
         raise subprocess.TimeoutExpired(cmd=cmd, timeout=1)
@@ -95,7 +105,7 @@ def test_generate_timeout_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_generate_missing_binary_at_run_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
     # Binary reported present but vanishes at exec time (FileNotFoundError).
-    monkeypatch.setenv(llm.CLAUDE_BIN_ENV, "/fake/claude")
+    monkeypatch.setenv(llm.PYTHON_ENV, "/fake/python")
 
     def fake_run(cmd, **kwargs):
         raise FileNotFoundError(cmd[0])
@@ -134,8 +144,22 @@ def test_prompt_carries_safety_state_tier() -> None:
 
 
 def test_stream_without_binary_yields_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv(llm.CLAUDE_BIN_ENV, raising=False)
-    monkeypatch.setattr(llm.shutil, "which", lambda _name: None)
+    monkeypatch.delenv(llm.PYTHON_ENV, raising=False)
+    monkeypatch.setattr(llm, "model_python", lambda: None)
     chunks = list(llm.stream(_msgs(), Tier.GREEN, system_prompt="sys"))
     assert chunks
     assert any("Shreya" in c or "F1" in c for c in chunks)
+
+
+def test_provider_error_is_body_free(monkeypatch):
+    monkeypatch.setenv(llm.PYTHON_ENV, "/fake/python")
+    monkeypatch.setattr(
+        llm.subprocess,
+        "run",
+        lambda *a, **k: _fake_completed(
+            stdout=json.dumps({"ok": False, "text": "", "error_code": "provider_unavailable"})
+        ),
+    )
+    result = llm.generate(_msgs(), Tier.GREEN, system_prompt="sys")
+    assert not result.ok and result.used_fallback
+    assert result.error == "model provider unavailable"

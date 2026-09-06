@@ -1,11 +1,13 @@
+You are Grok 4.6, requested xhigh effort, a bounded SOFTWARE backup reviewer. Only supplied source, no tools/files/network/subagents. Return JSON {"findings":[{"severity":"...","evidence":"exact source","counterexample":"concrete","fix":"smallest"}],"verdict":"pass|fail|uncertain","limitations":[]}. Do not assume missing function bodies or invent API signatures. This source uses stdlib sqlite3.backup to capture committed WAL into a closed database and Fernet to encrypt snapshots. User needs recovery, not just a green command. Check concrete path traversal/symlink, private-file coverage and consistent DB acquisition bugs. Do not claim that transactions AFTER a completed snapshot must be included: snapshot point-in-time is intended. Do not suggest raw copying WAL databases. Known explicit boundary: Keychain Fernet key remains in user's Keychain; separate off-device key custody cannot be proved by same-Mac restore. Source and configured data are private; never request or show credential values. Parent will reproduce findings and keep acceptance open. Severity must match actual data-loss/privacy impact. Flag omissions in implemented docs/result, but do not redesign whole backup.
+
+SOURCE:
 """G19 durability backups — ``dr-alex backup`` (born from a real uv-sync data-loss incident).
 
-One command produces three durable artifacts under ``data/backups/`` (dir 0700, gitignored):
+One command produces two durable artifacts under ``data/backups/`` (dir 0700, gitignored):
 
   1. a ``git bundle --all`` of the whole repo (every ref, self-contained, offline-restorable),
   2. a mode-0600 **encrypted** snapshot of ``state.db`` (Fernet, whole file — the telemetry
-     that isn't in git),
-  3. an encrypted tar of private data and records, including a recovery path manifest.
+     that isn't in git).
 
 Every retained bundle is verified (``git bundle verify``); a 14-bundle retention window prunes
 the oldest. On success it is **silent** (returns a result, prints nothing). It NEVER runs
@@ -18,7 +20,6 @@ from __future__ import annotations
 
 import datetime as _dt
 import io
-import json
 import logging
 import os
 import sqlite3
@@ -68,14 +69,17 @@ def repo_root(start: Path | None = None) -> Path | None:
 def backups_dir(repo: Path) -> Path:
     d = repo / "data" / "backups"
     d.mkdir(parents=True, exist_ok=True)
-    os.chmod(d, 0o700)
+    try:
+        os.chmod(d, 0o700)
+    except OSError:
+        pass
     return d
 
 
 def _ts(now: _dt.datetime | None) -> str:
     dt = now or _dt.datetime.now(_dt.UTC)
     dt = dt.astimezone(_dt.UTC) if dt.tzinfo else dt.replace(tzinfo=_dt.UTC)
-    return dt.strftime("%Y%m%dT%H%M%S%fZ")
+    return dt.strftime("%Y%m%dT%H%M%SZ")
 
 
 def _prune(dest: Path, errors: list[str]) -> int:
@@ -101,31 +105,17 @@ def run_backup(*, now: _dt.datetime | None = None, repo: Path | None = None) -> 
         return BackupResult(ok=False, errors=["no git repo found (backup needs the repo root)"])
 
     errors: list[str] = []
-    try:
-        dest = backups_dir(repo)
-    except OSError:
-        return BackupResult(ok=False, errors=["backup directory unavailable or not private"])
+    dest = backups_dir(repo)
     ts = _ts(now)
     bundle = dest / f"{ts}-dr-alex.bundle"
 
-    # Publish only a verified bundle; interrupted creation cannot poison later runs.
-    staged = None
+    # 1. git bundle --all (read-only; NEVER add/commit/push).
     try:
-        with tempfile.NamedTemporaryFile(prefix=".bundle-", dir=dest, delete=False) as temporary:
-            staged = Path(temporary.name)
-        proc = _run_git(repo, "bundle", "create", str(staged), "--all")
+        proc = _run_git(repo, "bundle", "create", str(bundle), "--all")
         if proc.returncode != 0:
             return BackupResult(ok=False, errors=[f"git bundle failed: exit {proc.returncode}"])
-        check = _run_git(repo, "bundle", "verify", str(staged))
-        if check.returncode != 0:
-            return BackupResult(ok=False, errors=["new git bundle verification failed"])
-        staged.chmod(0o600)
-        os.replace(staged, bundle)
     except (OSError, subprocess.SubprocessError) as exc:
-        return BackupResult(ok=False, errors=[f"git bundle failed: {type(exc).__name__}"])
-    finally:
-        if staged is not None:
-            staged.unlink(missing_ok=True)
+        return BackupResult(ok=False, errors=[f"git bundle spawn failed: {type(exc).__name__}"])
 
     # 2. Verify EVERY retained bundle (the new one plus survivors).
     verified = True
@@ -178,7 +168,7 @@ def run_backup(*, now: _dt.datetime | None = None, repo: Path | None = None) -> 
                             not file.is_file()
                             or file.is_symlink()
                             or any(part == "backups" for part in relative.parts)
-                            or file.name.endswith(("-wal", "-shm", "-journal", ".pid", ".tmp"))
+                            or file.name.endswith(("-wal", "-shm", ".pid", ".tmp"))
                         ):
                             continue
                         name = f"{prefix}/{relative.as_posix()}"
@@ -198,21 +188,7 @@ def run_backup(*, now: _dt.datetime | None = None, repo: Path | None = None) -> 
                         added.add(file.resolve())
                 active = config.active_file_path()
                 if active.is_file() and active.resolve() not in added:
-                    archive.add(active.resolve(), arcname="records/Active-File.md", recursive=False)
-                manifest = json.dumps(
-                    {
-                        "version": 1,
-                        "created_at": ts,
-                        "repo": str(repo.resolve()),
-                        "state_db": str(db.resolve()),
-                        "records_dir": str(config.records_dir().resolve()),
-                        "active_file": str(active.resolve()),
-                        "key_required": "macOS Keychain service dr-alex; state-key and pairing-key",
-                    }
-                ).encode()
-                info = tarfile.TarInfo("recovery-manifest.json")
-                info.size, info.mode = len(manifest), 0o600
-                archive.addfile(info, io.BytesIO(manifest))
+                    archive.add(active, arcname="records/Active-File.md", recursive=False)
             target = dest / f"{ts}-private.tar.gz.enc"
             target.write_bytes(crypto.encrypt_bytes(contents.getvalue()))
             target.chmod(0o600)
@@ -225,16 +201,8 @@ def run_backup(*, now: _dt.datetime | None = None, repo: Path | None = None) -> 
     except (OSError, sqlite3.Error, crypto.CryptoError, tarfile.TarError) as exc:
         errors.append(f"private archive failed: {type(exc).__name__}")
 
-    # A failed generation must never evict a complete recovery generation.
-    if not verified or errors:
-        for candidate in (bundle, dest / f"{ts}-state.db.enc", dest / f"{ts}-private.tar.gz.enc"):
-            try:
-                candidate.unlink(missing_ok=True)
-            except OSError:
-                errors.append("incomplete artifact cleanup failed")
-        return BackupResult(ok=False, verified=False, errors=errors)
     pruned = _prune(dest, errors)
-    ok = not errors
+    ok = verified and not errors
     return BackupResult(
         ok=ok,
         bundle_path=str(bundle),

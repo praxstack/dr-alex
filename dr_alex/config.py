@@ -35,11 +35,14 @@ BEHAVIOUR / REGISTER:
                                 turns are tagged and excluded from real-signal rollups.
 
 MODEL / BINARY:
-    DR_ALEX_MODEL       Override the Claude model id used for turns + recorded as
+    DR_ALEX_MODEL       Override the Codex model id (currently gpt-5.6-sol) used for turns + recorded as
                         ``model_version`` telemetry. (llm, telemetry)
-    DR_ALEX_CLAUDE_BIN  Path to the ``claude`` CLI binary (default: resolve on PATH). (llm)
+    DR_ALEX_SUBSCRIPTION_PYTHON  Hermes venv Python used by the isolated Codex transport.
+                        Default: ~/.hermes/hermes-agent/venv/bin/python. (llm)
 
 PATHS / STORAGE (all default under the install root; override for tests or a vault migration):
+    DR_ALEX_HERMES_DB         Read-only therapist raw-history SQLite source (default
+                              ~/.hermes/profiles/therapist/state.db). (history_recall)
     DR_ALEX_STATE_DB          ``state.db`` location (default ``<data>/state.db``). (statedb)
     DR_ALEX_ACTIVE_FILE       Canonical Active File path (council D4; the PraxVault migration
                               point). Also ``[records] active_file``. (config.active_file_path)

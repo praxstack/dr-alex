@@ -6,7 +6,7 @@
 #     installed on this machine yet — install it first (https://tailscale.com/download/mac).
 #
 # THE ONLY sanctioned way to reach alexd from the phone (council D3 rider 1):
-#     tailscale serve https / 127.0.0.1:8787
+#     tailscale serve https / 127.0.0.1:18787
 # This terminates HTTPS locally and proxies to the loopback bind. alexd itself NEVER binds
 # anything but 127.0.0.1 — 0.0.0.0 / LAN / ngrok / cloudflared / any public tunnel is BANNED
 # and is not a supported workaround. WireGuard + Tailscale device identity is the perimeter.
@@ -38,11 +38,11 @@ else
 fi
 say ""
 
-# 2. Is alexd listening on loopback:8787?
-if command -v curl >/dev/null 2>&1 && curl -fsS --max-time 2 http://127.0.0.1:8787/healthz >/dev/null 2>&1; then
-  ok "alexd is healthy on http://127.0.0.1:8787/  (start it with: dr-alex serve)"
+# 2. Is alexd listening on loopback:18787?
+if command -v curl >/dev/null 2>&1 && curl -fsS --max-time 2 http://127.0.0.1:18787/healthz >/dev/null 2>&1; then
+  ok "alexd is healthy on http://127.0.0.1:18787/  (start it with: dr-alex serve)"
 else
-  no "alexd not reachable on 127.0.0.1:8787 — start it first:  dr-alex serve"
+  no "alexd not reachable on 127.0.0.1:18787 — start it first:  dr-alex serve"
 fi
 say ""
 
@@ -50,12 +50,12 @@ say ""
 say "Loopback-only check (must NOT be reachable on 0.0.0.0/LAN):"
 lan_ip="$(ipconfig getifaddr en0 2>/dev/null || true)"
 if [ -n "${lan_ip}" ] && command -v curl >/dev/null 2>&1; then
-  if curl -fsS --max-time 2 "http://${lan_ip}:8787/healthz" >/dev/null 2>&1; then
-    no "REACHABLE on ${lan_ip}:8787 — this is a BANNED non-loopback exposure. Stop alexd and"
+  if curl -fsS --max-time 2 "http://${lan_ip}:18787/healthz" >/dev/null 2>&1; then
+    no "REACHABLE on ${lan_ip}:18787 — this is a BANNED non-loopback exposure. Stop alexd and"
     no "   ensure nothing is re-binding it to 0.0.0.0. alexd hard-asserts loopback; a proxy on"
     no "   top must not widen it. (council D3 rider 1)"
   else
-    ok "not reachable on ${lan_ip}:8787 (correct — loopback only)"
+    ok "not reachable on ${lan_ip}:18787 (correct — loopback only)"
   fi
 else
   ok "no LAN IP detected / curl missing — nothing to widen (fine)"
@@ -64,7 +64,7 @@ say ""
 
 say "── DO THESE STEPS YOURSELF (not auto-run) ─────────────────────────────────"
 say "1) Start alexd:            dr-alex serve"
-say "2) Expose over Tailscale:  tailscale serve https / 127.0.0.1:8787"
+say "2) Expose over Tailscale:  tailscale serve https / 127.0.0.1:18787"
 say "3) On the phone, open:     https://<this-node>.<your-tailnet>.ts.net/"
 say "4) Pair the device:        run 'dr-alex pair' and enter the code in the PWA"
 say "5) REQUIRED — register a passkey when the PWA nags (real over the HTTPS origin)"

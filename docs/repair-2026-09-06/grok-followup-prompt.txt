@@ -1,3 +1,8 @@
+You are Grok 4.6 at requested xhigh effort, reviewing software only. This is your second bounded task. No tools, filesystem access, private records, external research or other agents. Return JSON ONLY: {"findings": [...], "tests_py": "...", "limitations": [...]}. Your first evaluation is OPEN, not accepted: 2/4 tests passed, 2 failed. You passed regenerate=False although the API requires Callable[[str], str|None]. Use regenerate=lambda corrective: None for a deterministic fallback. GateOutcome exposes dependency_action, NOT boundary_action. Do NOT guess signatures or use introspection fallbacks. Your first high-severity finding assumed enforce_boundaries had clinical checks beyond dependency: it does not. Your FTS operator claim is unproven because tokens casefold lowercase, whereas SQLite operators are uppercase. Do not repeat unsupported claims.
+
+Deliver exactly THREE short, independent runnable pytest tests, deterministic and no network/files/subprocess: (1) table unicode/blank cell preservation; (2) register regeneration injecting dependency is replaced without extra model calls; (3) dependency alternatives 'You only need me', 'I am all you need', and a negative control 'I cannot replace your therapist'. Measure actual final text and dependency_action. Do not weaken these assertions just because implementation fails; label a reproduced miss. No clinical advice. The parent will execute and grade using unchanged criteria: requested model/effort, schema, evidence, safe runnable checks, safety preserved, findings reproduced, useful edge. Keep tests under90lines.
+
+COMPLETE GATES SOURCE:
 """Deterministic output gates — the last check before a reply reaches Prax (STEP 5).
 
 Two code-level gates, both pure and un-prompt-injectable:
@@ -60,9 +65,9 @@ class CitationResult:
 
 
 def _tidy(text: str) -> str:
-    text = re.sub(r"\(\s*\)", "", text)  # empty parens left by a strip
+    text = re.sub(r"\(\s*\)", "", text)          # empty parens left by a strip
     text = re.sub(r"[ \t]+([.,;:!?])", r"\1", text)  # space before punctuation
-    text = re.sub(r"[ \t]{2,}", " ", text)  # runs of spaces (not newlines)
+    text = re.sub(r"[ \t]{2,}", " ", text)        # runs of spaces (not newlines)
     text = re.sub(r"[ \t]+\n", "\n", text)
     return text.strip()
 
@@ -129,9 +134,7 @@ _DEP_PATTERNS = (
     r"your best friend",
     r"you'?re my best friend",
     r"my best friend",
-    r"i(?: am|'m) all you need",
-    r"you only need me",
-    r"don'?t talk to anyone else",
+    r"i'?m all you need",
     r"all you need is me",
     r"you don'?t need anyone else",
     r"you don'?t need anybody else",
@@ -152,7 +155,7 @@ _DEP_RE = tuple(re.compile(p) for p in _DEP_PATTERNS)
 _CORRECTIVE = (
     "IMPORTANT: your previous reply used dependency language that positions you as Prax's "
     "primary relationship or an always-available substitute for people. Rewrite it. Remove "
-    "any \"I'm always here / your best friend / I'm all you need / you don't need anyone "
+    'any "I\'m always here / your best friend / I\'m all you need / you don\'t need anyone '
     'else" framing. You are support BETWEEN sessions, not a replacement. Warmly point Prax '
     "toward one real person (Shreya, his brother Sachin, Ishani) or his own next step. Keep "
     "the warmth; drop the dependency."
@@ -181,7 +184,9 @@ def has_dependency_language(text: str) -> bool:
     return any(rx.search(n) for rx in _DEP_RE)
 
 
-def enforce_boundaries(reply: str, *, regenerate: Callable[[str], str | None]) -> BoundaryResult:
+def enforce_boundaries(
+    reply: str, *, regenerate: Callable[[str], str | None]
+) -> BoundaryResult:
     """Lint for dependency framing; regenerate once; else replace deterministically."""
     if not has_dependency_language(reply):
         return BoundaryResult(reply, "clean")
@@ -251,9 +256,7 @@ def strip_register(text: str) -> str:
         if _is_table_line(line):
             while i < n and _is_table_line(lines[i]):
                 if not _TABLE_SEP.match(lines[i]):
-                    out.append(
-                        "; ".join(cell.strip() for cell in lines[i].strip().strip("|").split("|"))
-                    )
+                    out.append("; ".join(cell.strip() for cell in lines[i].strip().strip("|").split("|")))
                 i += 1
             continue
         head = _CALLOUT_HEAD.match(line)

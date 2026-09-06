@@ -16,11 +16,12 @@ The turn pipeline (council-vetted order):
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from dr_alex import captoken, gates, paths, statedb, telemetry
+from dr_alex import captoken, gates, history_recall, memstore, paths, statedb, telemetry
 from dr_alex import config as _config
 from dr_alex import continuity as _continuity
 from dr_alex import llm as _llm
@@ -241,10 +242,7 @@ def red_response_rich(user_text: str | None = None, *, style: str | None = None)
     """Rich-markup RED reply for the TUI (graded-aware, full by default)."""
     if _use_graded(user_text, style):
         return crisis_card.render_graded_rich()
-    return (
-        f"[b]{crisis_card.GROUNDING_LINE}[/b]\n\n"
-        + crisis_card.render_rich()
-    )
+    return f"[b]{crisis_card.GROUNDING_LINE}[/b]\n\n" + crisis_card.render_rich()
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +279,9 @@ def record_turn_telemetry(
     safety_action: str,
     now: datetime | None = None,
     built_prompt: str | None = None,
-) -> None:
+    request_id: str | None = None,
+    session: SessionState | None = None,
+) -> bool:
     """Persist the G9 turn trace + encrypted transcript, and flag an empty-reply malfunction.
 
     Best-effort and body-free at the log layer: the trace row carries only
@@ -305,18 +305,45 @@ def record_turn_telemetry(
             now=now,
         )
         test_traffic = telemetry.is_test_traffic()
-        statedb.record_transcript(session_id=session_id, role="user", body=user_text,
-                                  tier=tier.value, is_test_traffic=test_traffic, now=now)
+        if request_id:
+            return statedb.complete_turn_request(
+                request_id,
+                user_body=user_text,
+                reply_body=reply_text,
+                tier=tier.value,
+                safety_action=safety_action,
+                safety_probe_asked=session.safety_probe_asked if session else False,
+                safety_probe_declined=session.safety_probe_declined if session else False,
+                recent_risk=(
+                    session.recent_risk.value if session and session.recent_risk else None
+                ),
+            )
+        statedb.record_transcript(
+            session_id=session_id,
+            role="user",
+            body=user_text,
+            tier=tier.value,
+            is_test_traffic=test_traffic,
+            now=now,
+        )
         if reply_text:
-            statedb.record_transcript(session_id=session_id, role="assistant", body=reply_text,
-                                      tier=tier.value, is_test_traffic=test_traffic, now=now)
+            statedb.record_transcript(
+                session_id=session_id,
+                role="assistant",
+                body=reply_text,
+                tier=tier.value,
+                is_test_traffic=test_traffic,
+                now=now,
+            )
         # G10: a visibly empty delivered reply is a malfunction — queue one ack for next start.
         if not reply_text or not reply_text.strip() or reply_text.strip() == "(no response)":
             telemetry.note_malfunction("empty_reply", session_id=session_id, now=now)
+        return True
     except Exception as exc:  # noqa: BLE001 — telemetry must never break a turn
         # Body-free (R3): the class only. Losing this means the transcript row and the G10
         # empty-reply malfunction ack are both missing, so the next session starts blind.
         _trace_log.warning("post-turn telemetry failed: %s", type(exc).__name__)
+        return False
 
 
 @dataclass
@@ -335,6 +362,10 @@ class TurnOutcome:
     safety_action: str = "none"
     chunk_ids: list[str] = field(default_factory=list)
     memory_ids: list[str] = field(default_factory=list)
+    durable: bool = True
+    request_id: str | None = None
+    replayed: bool = False
+    input_text: str | None = None
 
 
 def run_turn(
@@ -350,6 +381,9 @@ def run_turn(
     system_prompt_override: str | None = None,
     memory_ids: list[str] | None = None,
     generate_fn=None,
+    request_id: str | None = None,
+    request_payload_hash: str | None = None,
+    fragment_request_ids: list[str] | None = None,
 ) -> TurnOutcome:
     """THE single safety-first turn, shared by the TUI, the one-shot CLI, and ``alexd``.
 
@@ -369,7 +403,49 @@ def run_turn(
     if session is not None and recent_risk is None:
         recent_risk = session.recent_risk
 
+    # Session-bound callers (TUI, API) always get a durable request boundary, even when
+    # they do not need client-visible retries. One-shot calls without a session stay ephemeral.
+    if session_id and request_id is None:
+        request_id = f"turn-{uuid.uuid4().hex}"
+
     tier = classify(user_text, recent_risk=recent_risk, now=now)  # STEP 0
+    request_durable = True
+    commit_request_id = request_id
+    if request_id:
+        request = statedb.begin_turn_request(
+            request_id,
+            session_id=session_id,
+            body=user_text,
+            request_payload_hash=request_payload_hash,
+            tier=tier.value,
+            fragment_request_ids=fragment_request_ids,
+        )
+        if request is None:
+            # The model/crisis path remains available, but callers must surface that no
+            # durable acknowledgement was obtained and allow the input to be retried.
+            request_durable = False
+            commit_request_id = None
+        elif request.status == "completed" and request.response is not None:
+            try:
+                saved_tier = Tier(request.tier or tier.value)
+            except ValueError:
+                saved_tier = tier
+            return TurnOutcome(
+                tier=saved_tier,
+                text=request.response,
+                safety_action=request.safety_action or "none",
+                durable=True,
+                request_id=request_id,
+                replayed=True,
+                input_text=None,
+            )
+        elif request.input_text is not None:
+            # A pending request owns the assembled input encrypted in the ledger.  A
+            # client retry may contain only its final fragment; reusing that payload here
+            # preserves the already-drained fragments and avoids a second model turn with
+            # incomplete context.
+            user_text = request.input_text
+            tier = classify(user_text, recent_risk=recent_risk, now=now)
     if session is not None:
         session.recent_risk = tier
     if tier is Tier.RED:
@@ -380,17 +456,40 @@ def run_turn(
         # SAME telemetry path every surface uses (D1 product call — crisis turns are the
         # most safety-critical to keep; phone-side RED was previously never persisted).
         red_text = red_response_text(user_text)
-        record_turn_telemetry(
-            session_id=session_id, tier=tier, user_text=user_text, reply_text=red_text,
-            outcome=None, safety_action="red-card", now=now,
+        stored = record_turn_telemetry(
+            session_id=session_id,
+            tier=tier,
+            user_text=user_text,
+            reply_text=red_text,
+            outcome=None,
+            safety_action="red-card",
+            now=now,
             built_prompt=system_prompt_override,
+            request_id=commit_request_id,
+            session=session,
         )
-        return TurnOutcome(tier=tier, text=red_text, safety_action="red-card")
+        return TurnOutcome(
+            tier=tier,
+            text=red_text,
+            safety_action="red-card",
+            durable=(stored and request_durable),
+            request_id=request_id,
+            input_text=user_text,
+        )
 
     # STEP 0 passed (safety_check) → mint the short-lived capability token that book_search
     # (and any gated recall) require. RED never reaches here (council D3).
     with captoken.granted():
         retrieved, book_ctx = retrieve_context(user_text, retriever=retriever)  # STEP 1 + 2
+
+    # Historical excerpts are read-only orientation evidence. They are deliberately queried
+    # only after triage; RED turns return above before this seam is reachable.
+    historical_ctx = None
+    if memstore.memory_enabled():
+        historical_ctx = history_recall.recall_context(
+            user_text, current_session_id=session_id, limit=history_recall.MAX_SNIPPETS
+        )
+    combined_context = "\n\n".join(c for c in (book_ctx, historical_ctx) if c) or None
 
     messages = list(history or [])
     messages.append(_llm.Message(role="user", content=user_text))
@@ -399,7 +498,7 @@ def run_turn(
     safety_note = safety_probe_note(session, tier, user_text)
 
     def _gen(*, corrective: str | None = None, note: str | None = safety_note):
-        kwargs: dict = {"system_prompt": sp, "book_context": book_ctx, "timeout": timeout}
+        kwargs: dict = {"system_prompt": sp, "book_context": combined_context, "timeout": timeout}
         if corrective is not None:
             kwargs["corrective"] = corrective
         if note is not None:
@@ -427,13 +526,19 @@ def run_turn(
                 result.text = crisis_questioning.strip_safety_probe(result.text)
             safety_action = "reask-blocked"
 
-    outcome = gates.apply(result.text, retrieved, regenerate=lambda c: _gen(corrective=c).text)  # STEP 4
+    outcome = gates.apply(
+        result.text, retrieved, regenerate=lambda c: _gen(corrective=c).text
+    )  # STEP 4
 
     # D3 defense-in-depth: the gate-corrective regeneration inside ``gates.apply``
     # (dependency/register lint replacing the reply) can itself surface a fresh safety probe.
     # If the probe was already capped this session, strip it here too so NO code path — not the
     # re-ask regen above, not the gate regen — can ship a second safety probe. Never a 2nd ask.
-    if session is not None and session.suppress_safety_probe and crisis_questioning.is_safety_probe(outcome.text):
+    if (
+        session is not None
+        and session.suppress_safety_probe
+        and crisis_questioning.is_safety_probe(outcome.text)
+    ):
         outcome.text = crisis_questioning.strip_safety_probe(outcome.text)
         safety_action = "reask-blocked"
 
@@ -444,9 +549,17 @@ def run_turn(
             safety_action = "probe-asked"
 
     trace_turn(tier, retrieved, outcome, safety_action)  # STEP 5
-    record_turn_telemetry(
-        session_id=session_id, tier=tier, user_text=user_text, reply_text=outcome.text,
-        outcome=outcome, safety_action=safety_action, now=now, built_prompt=sp,
+    stored = record_turn_telemetry(
+        session_id=session_id,
+        tier=tier,
+        user_text=user_text,
+        reply_text=outcome.text,
+        outcome=outcome,
+        safety_action=safety_action,
+        now=now,
+        built_prompt=sp,
+        request_id=commit_request_id,
+        session=session,
     )
     return TurnOutcome(
         tier=tier,
@@ -454,6 +567,9 @@ def run_turn(
         safety_action=safety_action,
         chunk_ids=[c.chunk_id for c in retrieved],
         memory_ids=list(memory_ids or []),
+        durable=(stored and request_durable),
+        request_id=request_id,
+        input_text=user_text,
     )
 
 
@@ -474,8 +590,14 @@ def respond_oneshot(
     in :func:`run_turn` (one function, one model call site — Directive 1).
     """
     out = run_turn(
-        user_text, history=history, recent_risk=recent_risk, now=now, timeout=timeout,
-        retriever=retriever, session=session, session_id=session_id,
+        user_text,
+        history=history,
+        recent_risk=recent_risk,
+        now=now,
+        timeout=timeout,
+        retriever=retriever,
+        session=session,
+        session_id=session_id,
     )
     return out.tier, out.text
 

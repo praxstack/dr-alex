@@ -33,7 +33,7 @@ Design, in order (steps map to the module functions):
    decision, commit sha) to a gitignored log. No transcript bodies, ever (R3).
 
 **Ships wired but disabled.** ``tools/launchd/com.dr-alex.improve.plist`` has
-``Disabled=true`` and needs ``claude`` auth (unavailable from launchd) — it only runs when
+``Disabled=true`` and uses the shared subscription transport — it only runs when
 *you* enable it and have auth. Nothing here turns it on, and nothing here self-improves
 without a human enabling the job.
 """
@@ -65,7 +65,7 @@ PERSONA_REL = "persona/dr-alex.md"
 NOISE_EPS = 0.15
 
 COMMIT_PREFIX = "dr-alex improve: "
-_COAUTHOR = "Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
+_COAUTHOR = "Co-Authored-By: Codex <noreply@openai.com>"
 
 # A tiny FIXED, synthetic benchmark set — generic between-session prompts, NO personal data
 # and no clinical detail. Shipped in-tree so the loop has a stable relative yardstick.
@@ -100,20 +100,20 @@ _FROZEN_INVARIANTS: dict[str, tuple[str, ...]] = {
     # question may be asked) — the whole section header plus one marker per numbered rule.
     "crisis_questioning_7_rules": (
         "crisis questioning discipline",
-        "explicit, first-person, present-tense",   # rule 1
-        "forwarded, quoted, or past-tense",         # rule 2
-        "at most once per conversation",            # rule 3
-        "absolute terminals",                       # rule 4
-        "never hold the conversation hostage",      # rule 5
-        "never invent authority",                   # rule 6
-        "default to trusting the adult",            # rule 7
+        "explicit, first-person, present-tense",  # rule 1
+        "forwarded, quoted, or past-tense",  # rule 2
+        "at most once per conversation",  # rule 3
+        "absolute terminals",  # rule 4
+        "never hold the conversation hostage",  # rule 5
+        "never invent authority",  # rule 6
+        "default to trusting the adult",  # rule 7
     ),
     # The anti-sycophancy / anti-dependency contract.
     "anti_dependency_contract": (
         "anti-dependency contract",
         "refuse dependency framing",
         "autonomy",
-        "always here",     # the archetypal forbidden dependency phrase, quoted in-contract
+        "always here",  # the archetypal forbidden dependency phrase, quoted in-contract
         "point outward",
     ),
     # Boundaries: support between sessions, route-don't-counsel, reinforce the real team.
@@ -137,10 +137,10 @@ _FROZEN_INVARIANTS: dict[str, tuple[str, ...]] = {
     "crisis_card_reference": (
         "tele-manas",
         "14416",
-        "9152987821",       # iCall
-        "9820466726",       # AASRA
-        "1860-2662-345",    # Vandrevala
-        "112",              # Emergency
+        "9152987821",  # iCall
+        "9820466726",  # AASRA
+        "1860-2662-345",  # Vandrevala
+        "112",  # Emergency
         "shreya",
     ),
 }
@@ -179,7 +179,7 @@ def _extract_section_body(persona: str, anchor: str) -> str | None:
     if start is None:
         return None
     body: list[str] = []
-    for ln in lines[start + 1:]:
+    for ln in lines[start + 1 :]:
         if ln.strip() == "---" or ln.startswith("## "):
             break
         body.append(ln)
@@ -228,7 +228,10 @@ def check_frozen_invariants(persona: str, baseline: str | None = None) -> Invari
 
     passed = all(results.values()) and not changed
     return InvariantReport(
-        passed=passed, results=results, missing_markers=missing, changed_sections=changed,
+        passed=passed,
+        results=results,
+        missing_markers=missing,
+        changed_sections=changed,
     )
 
 
@@ -247,7 +250,7 @@ class GoldenReport:
     specificity: float = 1.0
     nonred_total: int = 0
     nonred_correct: int = 0  # AMBER→AMBER, GREEN→GREEN, NOT_RED→not-RED
-    false_red: int = 0       # non-RED cases that classified RED (the badgering FP class)
+    false_red: int = 0  # non-RED cases that classified RED (the badgering FP class)
 
 
 def _golden_corpus_path(root: Path) -> Path:
@@ -296,14 +299,19 @@ def check_golden_red_sensitivity(root: Path) -> GoldenReport:
     specificity = (1.0 - false_red / nonred_total) if nonred_total else 1.0
 
     passed = (
-        hit == len(red)                       # 100% RED sensitivity — the hard gate
-        and false_red == 0                    # no benign text flagged RED
-        and correct == nonred_total           # every non-RED case to its expected tier
+        hit == len(red)  # 100% RED sensitivity — the hard gate
+        and false_red == 0  # no benign text flagged RED
+        and correct == nonred_total  # every non-RED case to its expected tier
     )
     return GoldenReport(
-        passed=passed, sensitivity=sens, red_total=len(red), red_hit=hit,
-        specificity=specificity, nonred_total=nonred_total,
-        nonred_correct=correct, false_red=false_red,
+        passed=passed,
+        sensitivity=sens,
+        red_total=len(red),
+        red_hit=hit,
+        specificity=specificity,
+        nonred_total=nonred_total,
+        nonred_correct=correct,
+        false_red=false_red,
     )
 
 
@@ -345,9 +353,7 @@ def _write_guarded(root: Path, target: Path, content: str) -> None:
     dest = Path(target).resolve()
     allowed = _persona_target(root)
     if dest != allowed:
-        raise ImproveSafetyError(
-            f"refusing to write any file other than {PERSONA_REL}: {dest}"
-        )
+        raise ImproveSafetyError(f"refusing to write any file other than {PERSONA_REL}: {dest}")
     dest.write_text(content, encoding="utf-8")
 
 
@@ -361,7 +367,9 @@ def _write_guarded(root: Path, target: Path, content: str) -> None:
 def _run_git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", "-C", str(root), *args],
-        capture_output=True, text=True, check=check,
+        capture_output=True,
+        text=True,
+        check=check,
     )
 
 
@@ -408,7 +416,7 @@ _PROPOSE_SYSTEM = (
 
 _PROPOSE_INSTRUCTION = (
     "Read the persona above. Propose exactly ONE small edit to a NON-safety section. "
-    'Respond with ONLY a JSON object of the form '
+    "Respond with ONLY a JSON object of the form "
     '{"summary": "<=12-word description>", "find": "<exact substring copied verbatim from '
     'a non-safety section>", "replace": "<the improved substring>"}. The "find" text must '
     "appear verbatim in the persona and must NOT be part of any safety section. No prose, "
@@ -617,7 +625,7 @@ def _read_jsonl(path: Path) -> list[dict]:
 
 @dataclass
 class IterationResult:
-    decision: str                       # "keep" | "revert"
+    decision: str  # "keep" | "revert"
     reason: str
     summary: str | None = None
     invariants: dict[str, bool] = field(default_factory=dict)
@@ -673,9 +681,15 @@ def _audit_and_return(
     _append_jsonl(_audit_path(root), record)
     _log.info("improve run: decision=%s dry_run=%s reason=%s", decision, dry_run, reason)
     return IterationResult(
-        decision=decision, reason=reason, summary=summary, invariants=inv_results,
-        golden_sensitivity=golden_sens, baseline_mean=base, candidate_mean=cand,
-        commit_sha=commit_sha, dry_run=dry_run,
+        decision=decision,
+        reason=reason,
+        summary=summary,
+        invariants=inv_results,
+        golden_sensitivity=golden_sens,
+        baseline_mean=base,
+        candidate_mean=cand,
+        commit_sha=commit_sha,
+        dry_run=dry_run,
     )
 
 
@@ -708,8 +722,15 @@ def run_once(
         if current != baseline:
             _write_guarded(root, _persona_target(root), baseline)
         return _audit_and_return(
-            root, now=now, decision="revert", reason=reason, summary=summary,
-            gate=gate, bench=bench, commit_sha=None, dry_run=dry_run,
+            root,
+            now=now,
+            decision="revert",
+            reason=reason,
+            summary=summary,
+            gate=gate,
+            bench=bench,
+            commit_sha=None,
+            dry_run=dry_run,
         )
 
     # 1. PROPOSE ------------------------------------------------------------
@@ -723,20 +744,23 @@ def run_once(
 
     candidate = apply_edit(baseline, edit)
     if candidate is None:
-        return revert("proposed edit did not apply cleanly (find-string absent/no-op)",
-                      summary=edit.summary)
+        return revert(
+            "proposed edit did not apply cleanly (find-string absent/no-op)", summary=edit.summary
+        )
 
     # 2. HARD SAFETY GATE ---------------------------------------------------
     gate = run_safety_gate(candidate, root, baseline=baseline)
     if not gate.passed:
-        _, reason = _decide(gate, BenchResult(ok=False, baseline_mean=None,
-                                              candidate_mean=None, n=len(prompts)))
+        _, reason = _decide(
+            gate, BenchResult(ok=False, baseline_mean=None, candidate_mean=None, n=len(prompts))
+        )
         return revert(reason, summary=edit.summary, gate=gate)
 
     # 3. BENCHMARK ----------------------------------------------------------
     try:
-        bench = benchmark(candidate, baseline, prompts=prompts,
-                          generate_fn=generate_fn, judge_fn=judge_fn)
+        bench = benchmark(
+            candidate, baseline, prompts=prompts, generate_fn=generate_fn, judge_fn=judge_fn
+        )
     except Exception as exc:  # noqa: BLE001 - any benchmark failure → revert
         _log.warning("benchmark failed: %s", type(exc).__name__)
         bench = BenchResult(ok=False, baseline_mean=None, candidate_mean=None, n=len(prompts))
@@ -748,8 +772,15 @@ def run_once(
 
     if dry_run:
         return _audit_and_return(
-            root, now=now, decision="keep", reason=f"{reason} [DRY-RUN — not committed]",
-            summary=edit.summary, gate=gate, bench=bench, commit_sha=None, dry_run=True,
+            root,
+            now=now,
+            decision="keep",
+            reason=f"{reason} [DRY-RUN — not committed]",
+            summary=edit.summary,
+            gate=gate,
+            bench=bench,
+            commit_sha=None,
+            dry_run=True,
         )
 
     # KEEP: land the change as ONE revertible commit + changelog. On any failure mid-write,
@@ -757,26 +788,42 @@ def run_once(
     try:
         _write_guarded(root, _persona_target(root), candidate)
         commit_sha = _commit_persona(
-            root, edit.summary,
-            baseline_mean=bench.baseline_mean, candidate_mean=bench.candidate_mean,
+            root,
+            edit.summary,
+            baseline_mean=bench.baseline_mean,
+            candidate_mean=bench.candidate_mean,
         )
     except (ImproveSafetyError, subprocess.CalledProcessError, OSError) as exc:
         _log.warning("keep/commit failed (%s) — restoring baseline", type(exc).__name__)
         if _read_persona(root) != baseline:
             _write_guarded(root, _persona_target(root), baseline)
-        return revert(f"keep aborted: {type(exc).__name__} — persona restored",
-                      summary=edit.summary, gate=gate, bench=bench)
+        return revert(
+            f"keep aborted: {type(exc).__name__} — persona restored",
+            summary=edit.summary,
+            gate=gate,
+            bench=bench,
+        )
 
-    _append_jsonl(_changelog_path(root), {
-        "ts": now.isoformat(),
-        "summary": edit.summary,
-        "wai_sr_baseline": bench.baseline_mean,
-        "wai_sr_candidate": bench.candidate_mean,
-        "commit_sha": commit_sha,
-    })
+    _append_jsonl(
+        _changelog_path(root),
+        {
+            "ts": now.isoformat(),
+            "summary": edit.summary,
+            "wai_sr_baseline": bench.baseline_mean,
+            "wai_sr_candidate": bench.candidate_mean,
+            "commit_sha": commit_sha,
+        },
+    )
     return _audit_and_return(
-        root, now=now, decision="keep", reason=reason, summary=edit.summary,
-        gate=gate, bench=bench, commit_sha=commit_sha, dry_run=False,
+        root,
+        now=now,
+        decision="keep",
+        reason=reason,
+        summary=edit.summary,
+        gate=gate,
+        bench=bench,
+        commit_sha=commit_sha,
+        dry_run=False,
     )
 
 
@@ -798,8 +845,11 @@ def _reverted_shas(root: Path) -> set[str]:
 
 def _last_accepted_sha(root: Path) -> str | None:
     reverted = _reverted_shas(root)
-    accepted = [e for e in _read_jsonl(_changelog_path(root))
-                if e.get("commit_sha") and e["commit_sha"] not in reverted]
+    accepted = [
+        e
+        for e in _read_jsonl(_changelog_path(root))
+        if e.get("commit_sha") and e["commit_sha"] not in reverted
+    ]
     return accepted[-1]["commit_sha"] if accepted else None
 
 

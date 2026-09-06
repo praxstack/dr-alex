@@ -32,7 +32,7 @@ def enabled() -> bool:
 
 def model_version() -> str:
     """The model identifier for this run (``DR_ALEX_MODEL`` if pinned, else the CLI default)."""
-    return os.environ.get(_MODEL_ENV) or "claude-cli-default"
+    return os.environ.get(_MODEL_ENV) or "gpt-5.6-sol"
 
 
 def prompt_hash(system_prompt: str, user_prompt: str) -> str:
@@ -95,7 +95,9 @@ _ACK_COPY = {
 }
 
 
-def note_malfunction(kind: str, *, session_id: str | None = None, now: _dt.datetime | None = None) -> None:
+def note_malfunction(
+    kind: str, *, session_id: str | None = None, now: _dt.datetime | None = None
+) -> None:
     """Record a visible malfunction so exactly one ack is queued for the next session start."""
     statedb.flag_malfunction(kind, session_id=session_id, now=now)
 

@@ -19,6 +19,7 @@ never break a session. A kill-switch (``DR_ALEX_TELEMETRY_OFF``) disables the st
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 import logging
 import os
 import sqlite3
@@ -80,7 +81,7 @@ def _ist(now: _dt.datetime | None = None) -> _dt.datetime:
 
 #: Bump when ``_SCHEMA`` changes so an existing db re-applies it once (D17). PRAGMA
 #: user_version is stored in the db file, so the schema is applied once per file, not per op.
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -89,7 +90,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     ended_ts          TEXT,
     started_date_ist  TEXT NOT NULL,
     started_hour_ist  INTEGER NOT NULL,
-    is_test_traffic   INTEGER NOT NULL DEFAULT 0
+    is_test_traffic   INTEGER NOT NULL DEFAULT 0,
+    safety_probe_asked INTEGER NOT NULL DEFAULT 0,
+    safety_probe_declined INTEGER NOT NULL DEFAULT 0,
+    recent_risk       TEXT
 );
 CREATE TABLE IF NOT EXISTS mood_events (
     id          TEXT PRIMARY KEY,
@@ -127,6 +131,35 @@ CREATE TABLE IF NOT EXISTS transcripts (
     body_enc         BLOB NOT NULL,
     tier             TEXT,
     is_test_traffic  INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS api_events (
+    id               TEXT PRIMARY KEY,
+    request_id       TEXT NOT NULL,
+    session_id       TEXT,
+    ts               TEXT NOT NULL,
+    event_type       TEXT NOT NULL,
+    payload_hash     TEXT NOT NULL,
+    body_enc         BLOB NOT NULL,
+    is_test_traffic  INTEGER NOT NULL DEFAULT 0,
+    consumed         INTEGER NOT NULL DEFAULT 0,
+    consumed_by      TEXT
+);
+CREATE TABLE IF NOT EXISTS turn_requests (
+    request_id       TEXT PRIMARY KEY,
+    session_id       TEXT,
+    payload_hash     TEXT NOT NULL,
+    input_enc        BLOB NOT NULL,
+    created_ts       TEXT NOT NULL,
+    completed_ts     TEXT,
+    status           TEXT NOT NULL,
+    tier             TEXT,
+    response_enc     BLOB,
+    response_tier    TEXT,
+    safety_action    TEXT,
+    is_test_traffic  INTEGER NOT NULL DEFAULT 0,
+    safety_probe_asked INTEGER NOT NULL DEFAULT 0,
+    safety_probe_declined INTEGER NOT NULL DEFAULT 0,
+    recent_risk      TEXT
 );
 CREATE TABLE IF NOT EXISTS repair_acks (
     id          TEXT PRIMARY KEY,
@@ -182,11 +215,42 @@ def _connect(path: Path | None = None) -> Iterator[sqlite3.Connection]:
         except OSError:
             pass
     try:
-        # Apply the 8-table schema only when this db file hasn't been initialized to the
+        # Apply the schema only when this db file hasn't been initialized to the
         # current version yet — gated by PRAGMA user_version (D17). Routine reads/writes then
         # skip the CREATE-TABLE script entirely instead of re-running it on every _connect.
         if conn.execute("PRAGMA user_version").fetchone()[0] < _SCHEMA_VERSION:
             conn.executescript(_SCHEMA)
+            # v1 databases already have the original sessions table. SQLite has no
+            # conditional ALTER, so tolerate duplicate-column errors while upgrading.
+            for column, definition in (
+                ("safety_probe_asked", "INTEGER NOT NULL DEFAULT 0"),
+                ("safety_probe_declined", "INTEGER NOT NULL DEFAULT 0"),
+                ("recent_risk", "TEXT"),
+            ):
+                try:
+                    conn.execute(f"ALTER TABLE sessions ADD COLUMN {column} {definition}")
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc).lower():
+                        raise
+            for column, definition in (
+                ("consumed", "INTEGER NOT NULL DEFAULT 0"),
+                ("consumed_by", "TEXT"),
+            ):
+                try:
+                    conn.execute(f"ALTER TABLE api_events ADD COLUMN {column} {definition}")
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc).lower():
+                        raise
+            for column, definition in (
+                ("safety_probe_asked", "INTEGER NOT NULL DEFAULT 0"),
+                ("safety_probe_declined", "INTEGER NOT NULL DEFAULT 0"),
+                ("recent_risk", "TEXT"),
+            ):
+                try:
+                    conn.execute(f"ALTER TABLE turn_requests ADD COLUMN {column} {definition}")
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc).lower():
+                        raise
             conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
         yield conn
         conn.commit()
@@ -239,9 +303,9 @@ def start_session(
     now: _dt.datetime | None = None,
     is_test_traffic: bool = False,
     path: Path | None = None,
-) -> None:
+) -> bool:
     if not telemetry_enabled():
-        return
+        return False
     ist = _ist(now)
     try:
         with _connect(path) as conn:
@@ -249,21 +313,99 @@ def start_session(
                 "INSERT OR IGNORE INTO sessions "
                 "(id, started_ts, ended_ts, started_date_ist, started_hour_ist, is_test_traffic) "
                 "VALUES (?,?,?,?,?,?)",
-                (session_id, _now_iso(now), None, ist.strftime("%Y-%m-%d"), ist.hour,
-                 _bool(is_test_traffic)),
+                (
+                    session_id,
+                    _now_iso(now),
+                    None,
+                    ist.strftime("%Y-%m-%d"),
+                    ist.hour,
+                    _bool(is_test_traffic),
+                ),
             )
     except sqlite3.Error as exc:
         _log.warning("start_session failed: %s", type(exc).__name__)
+        return False
+    return True
 
 
-def end_session(session_id: str, *, now: _dt.datetime | None = None, path: Path | None = None) -> None:
+@dataclass
+class PersistedSessionState:
+    safety_probe_asked: bool = False
+    safety_probe_declined: bool = False
+    recent_risk: str | None = None
+
+
+def load_session_state(session_id: str, *, path: Path | None = None) -> PersistedSessionState:
+    """Load the small safety state needed to resume a Room session."""
     if not telemetry_enabled():
-        return
+        return PersistedSessionState()
+    try:
+        with _connect(path) as conn:
+            row = conn.execute(
+                "SELECT safety_probe_asked, safety_probe_declined, recent_risk "
+                "FROM sessions WHERE id=?",
+                (session_id,),
+            ).fetchone()
+            # Completion stores the same resume flags on the request row.  Use the latest
+            # completed turn as a deterministic fallback if an older process died between
+            # its reply commit and the separate session-state write.
+            completed = conn.execute(
+                "SELECT safety_probe_asked, safety_probe_declined, recent_risk "
+                "FROM turn_requests WHERE session_id=? AND status='completed' "
+                "ORDER BY completed_ts DESC LIMIT 1",
+                (session_id,),
+            ).fetchone()
+    except sqlite3.Error:
+        return PersistedSessionState()
+    if row is None and completed is None:
+        return PersistedSessionState()
+    if row is None:
+        row = (0, 0, None)
+    if completed is not None:
+        return PersistedSessionState(
+            bool(row[0]) or bool(completed[0]),
+            bool(row[1]) or bool(completed[1]),
+            completed[2] or row[2],
+        )
+    return PersistedSessionState(bool(row[0]), bool(row[1]), row[2])
+
+
+def update_session_state(
+    session_id: str,
+    *,
+    safety_probe_asked: bool,
+    safety_probe_declined: bool,
+    recent_risk: str | None,
+    path: Path | None = None,
+) -> bool:
+    """Persist resume-critical safety flags; return False when storage is unavailable."""
+    if not telemetry_enabled():
+        return False
+    try:
+        with _connect(path) as conn:
+            cur = conn.execute(
+                "UPDATE sessions SET safety_probe_asked=?, safety_probe_declined=?, "
+                "recent_risk=? WHERE id=?",
+                (_bool(safety_probe_asked), _bool(safety_probe_declined), recent_risk, session_id),
+            )
+            return cur.rowcount > 0
+    except sqlite3.Error as exc:
+        _log.warning("update_session_state failed: %s", type(exc).__name__)
+        return False
+
+
+def end_session(
+    session_id: str, *, now: _dt.datetime | None = None, path: Path | None = None
+) -> bool:
+    if not telemetry_enabled():
+        return False
     try:
         with _connect(path) as conn:
             conn.execute("UPDATE sessions SET ended_ts=? WHERE id=?", (_now_iso(now), session_id))
     except sqlite3.Error as exc:
         _log.warning("end_session failed: %s", type(exc).__name__)
+        return False
+    return True
 
 
 def checkin_dates(*, path: Path | None = None) -> list[str]:
@@ -336,7 +478,9 @@ def _mood_rows(days: int, now: _dt.datetime | None, path: Path | None) -> list[t
         return []
 
 
-def mood_stats(*, days: int = 30, now: _dt.datetime | None = None, path: Path | None = None) -> MoodStats:
+def mood_stats(
+    *, days: int = 30, now: _dt.datetime | None = None, path: Path | None = None
+) -> MoodStats:
     if not telemetry_enabled():
         return MoodStats(window_days=days)
     rows = _mood_rows(days, now, path)
@@ -353,7 +497,9 @@ def mood_stats(*, days: int = 30, now: _dt.datetime | None = None, path: Path | 
     )
 
 
-def daily_mood(*, days: int = 30, now: _dt.datetime | None = None, path: Path | None = None) -> list[float | None]:
+def daily_mood(
+    *, days: int = 30, now: _dt.datetime | None = None, path: Path | None = None
+) -> list[float | None]:
     """Latest mood per IST-day over the last ``days`` days (oldest→newest) for the sparkline.
 
     Days without a mood chip render as ``None`` (a gap, not a fabricated value).
@@ -398,7 +544,9 @@ def session_moods(session_id: str, *, path: Path | None = None) -> tuple[int | N
     return (open_mood, close_mood)
 
 
-def risk_tier_max(*, days: int = 30, now: _dt.datetime | None = None, path: Path | None = None) -> str | None:
+def risk_tier_max(
+    *, days: int = 30, now: _dt.datetime | None = None, path: Path | None = None
+) -> str | None:
     if not telemetry_enabled():
         return None
     cutoff = _now_iso((now or _dt.datetime.now(_dt.UTC)) - _dt.timedelta(days=days))
@@ -450,7 +598,15 @@ def add_homework(
             conn.execute(
                 "INSERT INTO homework (id, title_enc, assigned_date, due, source_session, status, created_ts) "
                 "VALUES (?,?,?,?,?,?,?)",
-                (rid, crypto.encrypt(title.strip()), assigned, due, source_session, "open", _now_iso(now)),
+                (
+                    rid,
+                    crypto.encrypt(title.strip()),
+                    assigned,
+                    due,
+                    source_session,
+                    "open",
+                    _now_iso(now),
+                ),
             )
     except sqlite3.Error as exc:
         _log.warning("add_homework failed: %s", type(exc).__name__)
@@ -465,10 +621,17 @@ def _rows_to_homework(rows) -> list[Homework]:
             title = crypto.decrypt(r[1]) or ""
         except crypto.CryptoError:
             title = "(unreadable — key mismatch)"
-        out.append(Homework(
-            id=r[0], title=title, assigned_date=r[2], due=r[3],
-            source_session=r[4], status=r[5], created_ts=r[6],
-        ))
+        out.append(
+            Homework(
+                id=r[0],
+                title=title,
+                assigned_date=r[2],
+                due=r[3],
+                source_session=r[4],
+                status=r[5],
+                created_ts=r[6],
+            )
+        )
     return out
 
 
@@ -545,13 +708,346 @@ def record_turn_trace(
                 "INSERT INTO turn_traces (id, session_id, ts, tier, model_version, prompt_hash, "
                 "is_test_traffic, safety_action, dependency_action, register_action) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (rid, session_id, _now_iso(now), tier, model_version, prompt_hash,
-                 _bool(is_test_traffic), safety_action, dependency_action, register_action),
+                (
+                    rid,
+                    session_id,
+                    _now_iso(now),
+                    tier,
+                    model_version,
+                    prompt_hash,
+                    _bool(is_test_traffic),
+                    safety_action,
+                    dependency_action,
+                    register_action,
+                ),
             )
     except sqlite3.Error as exc:
         _log.warning("record_turn_trace failed: %s", type(exc).__name__)
         return None
     return rid
+
+
+# ---------------------------------------------------------------------------
+# API input + idempotent completed turns.
+# ---------------------------------------------------------------------------
+
+
+class RequestPayloadConflict(ValueError):
+    """A request id was reused for a different payload."""
+
+
+@dataclass
+class TurnRequest:
+    request_id: str
+    session_id: str | None
+    payload_hash: str
+    status: str
+    response: str | None = None
+    tier: str | None = None
+    safety_action: str | None = None
+    # The assembled, encrypted input is distinct from payload_hash.  A retry may
+    # carry only the final fragment while the pending row still owns earlier input.
+    input_text: str | None = None
+    safety_probe_asked: bool = False
+    safety_probe_declined: bool = False
+    recent_risk: str | None = None
+
+
+def payload_hash(payload: object) -> str:
+    """Stable body hash for request-id conflict detection (the body itself stays encrypted)."""
+    import json
+
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _request_from_row(row) -> TurnRequest:
+    input_text = None
+    if row[3] is not None:
+        try:
+            input_text = crypto.decrypt(row[3]) or ""
+        except crypto.CryptoError:
+            input_text = None
+    response = None
+    if row[8] is not None:
+        try:
+            response = crypto.decrypt(row[8]) or ""
+        except crypto.CryptoError:
+            response = None
+    return TurnRequest(
+        request_id=row[0],
+        session_id=row[1],
+        payload_hash=row[2],
+        status=row[6],
+        response=response,
+        tier=row[7],
+        safety_action=row[9],
+        input_text=input_text,
+        safety_probe_asked=bool(row[11]),
+        safety_probe_declined=bool(row[12]),
+        recent_risk=row[13],
+    )
+
+
+def begin_turn_request(
+    request_id: str,
+    *,
+    session_id: str | None,
+    body: str,
+    request_payload_hash: str | None = None,
+    tier: str | None = None,
+    event_type: str = "turn",
+    fragment_request_ids: list[str] | None = None,
+    path: Path | None = None,
+) -> TurnRequest | None:
+    """Durably accept one API request before model work.
+
+    Existing completed rows are returned for replay; a mismatched payload is rejected. A
+    ``None`` result means storage failed, so callers must not claim a durable acknowledgement.
+    """
+    if not telemetry_enabled() or not request_id:
+        return None
+    digest = request_payload_hash or payload_hash(body)
+    try:
+        with _connect(path) as conn:
+            row = conn.execute(
+                "SELECT request_id, session_id, payload_hash, input_enc, created_ts, completed_ts, "
+                "status, tier, response_enc, safety_action, is_test_traffic, "
+                "safety_probe_asked, safety_probe_declined, recent_risk "
+                "FROM turn_requests WHERE request_id=?",
+                (request_id,),
+            ).fetchone()
+            if row is not None:
+                if row[2] != digest or row[1] != session_id:
+                    raise RequestPayloadConflict(
+                        f"request id {request_id!r} reused with a different payload"
+                    )
+                return _request_from_row(row)
+            now = _now_iso()
+            test_traffic = os.environ.get("DR_ALEX_TEST_TRAFFIC") == "1"
+            conn.execute(
+                "INSERT INTO turn_requests "
+                "(request_id, session_id, payload_hash, input_enc, created_ts, status, tier, "
+                "response_enc, response_tier, safety_action, is_test_traffic) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    request_id,
+                    session_id,
+                    digest,
+                    crypto.encrypt(body),
+                    now,
+                    "pending",
+                    tier,
+                    None,
+                    tier,
+                    None,
+                    _bool(test_traffic),
+                ),
+            )
+            if (
+                conn.execute(
+                    "SELECT 1 FROM api_events WHERE request_id=? LIMIT 1", (request_id,)
+                ).fetchone()
+                is None
+            ):
+                conn.execute(
+                    "INSERT INTO api_events (id, request_id, session_id, ts, event_type, payload_hash, "
+                    "body_enc, is_test_traffic) VALUES (?,?,?,?,?,?,?,?)",
+                    (
+                        ulid.new(),
+                        request_id,
+                        session_id,
+                        now,
+                        event_type,
+                        digest,
+                        crypto.encrypt(body),
+                        _bool(test_traffic),
+                    ),
+                )
+            # Claim only the fragment events that the caller actually coalesced. Events
+            # accepted after coalescing belong to a later turn and must remain recoverable.
+            ids = list(dict.fromkeys(fragment_request_ids or []))
+            if ids:
+                marks = ",".join("?" for _ in ids)
+                conn.execute(
+                    "UPDATE api_events SET consumed_by=? WHERE session_id=? AND event_type='fragment' "
+                    f"AND request_id IN ({marks}) AND consumed=0 AND consumed_by IS NULL",
+                    (request_id, session_id, *ids),
+                )
+            return TurnRequest(
+                request_id, session_id, digest, "pending", tier=tier, input_text=body
+            )
+    except RequestPayloadConflict:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("begin_turn_request failed: %s", type(exc).__name__)
+        return None
+
+
+def record_api_event(
+    request_id: str,
+    *,
+    session_id: str | None,
+    body: str,
+    request_payload_hash: str | None = None,
+    event_type: str = "fragment",
+    path: Path | None = None,
+) -> str:
+    """Record one raw API event, deduplicating exact retries and rejecting conflicts."""
+    if not telemetry_enabled() or not request_id:
+        return "disabled"
+    digest = request_payload_hash or payload_hash(body)
+    try:
+        with _connect(path) as conn:
+            row = conn.execute(
+                "SELECT payload_hash, session_id FROM api_events WHERE request_id=? ORDER BY ts LIMIT 1",
+                (request_id,),
+            ).fetchone()
+            if row is not None:
+                if row[0] != digest or row[1] != session_id:
+                    raise RequestPayloadConflict(
+                        f"request id {request_id!r} reused with a different payload"
+                    )
+                return "duplicate"
+            now = _now_iso()
+            conn.execute(
+                "INSERT INTO api_events (id, request_id, session_id, ts, event_type, payload_hash, "
+                "body_enc, is_test_traffic) VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    ulid.new(),
+                    request_id,
+                    session_id,
+                    now,
+                    event_type,
+                    digest,
+                    crypto.encrypt(body),
+                    _bool(os.environ.get("DR_ALEX_TEST_TRAFFIC") == "1"),
+                ),
+            )
+            return "recorded"
+    except RequestPayloadConflict:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("record_api_event failed: %s", type(exc).__name__)
+        return "failed"
+
+
+def load_unconsumed_api_events(session_id: str, *, path: Path | None = None) -> list[str]:
+    """Return encrypted raw fragments not yet committed to a completed turn.
+
+    This is deliberately limited to fragment events.  Final turn bodies are represented by
+    ``turn_requests.input_enc`` and must not be replayed as an additional fragment.
+    """
+    if not telemetry_enabled() or not session_id:
+        return []
+    return [body for _request_id, body in load_unconsumed_api_event_records(session_id, path=path)]
+
+
+def load_unconsumed_api_event_records(
+    session_id: str, *, path: Path | None = None
+) -> list[tuple[str, str]]:
+    """Return ``(request_id, body)`` for recoverable raw fragment events."""
+    if not telemetry_enabled() or not session_id:
+        return []
+    try:
+        with _connect(path) as conn:
+            rows = conn.execute(
+                "SELECT request_id, body_enc FROM api_events WHERE session_id=? "
+                "AND event_type='fragment' AND consumed=0 AND consumed_by IS NULL ORDER BY rowid",
+                (session_id,),
+            ).fetchall()
+    except Exception:  # noqa: BLE001 — restore must remain usable if storage is unavailable
+        return []
+    out: list[tuple[str, str]] = []
+    for request_id, body_enc in rows:
+        try:
+            body = crypto.decrypt(body_enc)
+        except crypto.CryptoError:
+            continue
+        if body:
+            out.append((request_id, body))
+    return out
+
+
+def complete_turn_request(
+    request_id: str,
+    *,
+    user_body: str,
+    reply_body: str,
+    tier: str,
+    safety_action: str = "none",
+    safety_probe_asked: bool = False,
+    safety_probe_declined: bool = False,
+    recent_risk: str | None = None,
+    path: Path | None = None,
+) -> bool:
+    """Atomically mark a request complete and append its transcript pair."""
+    if not telemetry_enabled() or not request_id:
+        return False
+    try:
+        with _connect(path) as conn:
+            row = conn.execute(
+                "SELECT session_id, status FROM turn_requests WHERE request_id=?", (request_id,)
+            ).fetchone()
+            if row is None:
+                return False
+            if row[1] == "completed":
+                return True
+            sid = row[0]
+            now = _now_iso()
+            test_traffic = os.environ.get("DR_ALEX_TEST_TRAFFIC") == "1"
+            for role, body in (("user", user_body), ("assistant", reply_body)):
+                if body:
+                    conn.execute(
+                        "INSERT INTO transcripts (id, session_id, ts, role, body_enc, tier, "
+                        "is_test_traffic) VALUES (?,?,?,?,?,?,?)",
+                        (
+                            ulid.new(),
+                            sid,
+                            now,
+                            role,
+                            crypto.encrypt(body),
+                            tier,
+                            _bool(test_traffic),
+                        ),
+                    )
+            conn.execute(
+                "UPDATE turn_requests SET completed_ts=?, status='completed', tier=?, "
+                "response_enc=?, response_tier=?, safety_action=?, safety_probe_asked=?, "
+                "safety_probe_declined=?, recent_risk=? WHERE request_id=?",
+                (
+                    now,
+                    tier,
+                    crypto.encrypt(reply_body),
+                    tier,
+                    safety_action,
+                    _bool(safety_probe_asked),
+                    _bool(safety_probe_declined),
+                    recent_risk,
+                    request_id,
+                ),
+            )
+            # Safety resume flags and the completed reply share this transaction.  A
+            # fragment assigned to this request is consumed only after that commit point.
+            if sid:
+                conn.execute(
+                    "UPDATE sessions SET safety_probe_asked=?, safety_probe_declined=?, "
+                    "recent_risk=? WHERE id=?",
+                    (
+                        _bool(safety_probe_asked),
+                        _bool(safety_probe_declined),
+                        recent_risk,
+                        sid,
+                    ),
+                )
+            conn.execute(
+                "UPDATE api_events SET consumed=1 WHERE consumed_by=? AND consumed=0",
+                (request_id,),
+            )
+            return True
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("complete_turn_request failed: %s", type(exc).__name__)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -579,7 +1075,15 @@ def record_transcript(
             conn.execute(
                 "INSERT INTO transcripts (id, session_id, ts, role, body_enc, tier, is_test_traffic) "
                 "VALUES (?,?,?,?,?,?,?)",
-                (rid, session_id, _now_iso(now), role, crypto.encrypt(body), tier, _bool(is_test_traffic)),
+                (
+                    rid,
+                    session_id,
+                    _now_iso(now),
+                    role,
+                    crypto.encrypt(body),
+                    tier,
+                    _bool(is_test_traffic),
+                ),
             )
     except sqlite3.Error as exc:
         _log.warning("record_transcript failed: %s", type(exc).__name__)
@@ -597,7 +1101,9 @@ class TranscriptTurn:
     is_test_traffic: bool
 
 
-def session_ids_with_transcripts(*, include_test: bool = False, path: Path | None = None) -> list[str]:
+def session_ids_with_transcripts(
+    *, include_test: bool = False, path: Path | None = None
+) -> list[str]:
     if not telemetry_enabled():
         return []
     q = "SELECT DISTINCT session_id FROM transcripts"
@@ -619,7 +1125,8 @@ def load_transcript(session_id: str, *, path: Path | None = None) -> list[Transc
         with _connect(path) as conn:
             rows = conn.execute(
                 "SELECT session_id, ts, role, body_enc, tier, is_test_traffic FROM transcripts "
-                "WHERE session_id=? ORDER BY ts", (session_id,)
+                "WHERE session_id=? ORDER BY ts",
+                (session_id,),
             ).fetchall()
     except sqlite3.Error:
         return []
@@ -629,9 +1136,16 @@ def load_transcript(session_id: str, *, path: Path | None = None) -> list[Transc
             body = crypto.decrypt(r[3]) or ""
         except crypto.CryptoError:
             continue
-        out.append(TranscriptTurn(
-            session_id=r[0], ts=r[1], role=r[2], body=body, tier=r[4], is_test_traffic=bool(r[5]),
-        ))
+        out.append(
+            TranscriptTurn(
+                session_id=r[0],
+                ts=r[1],
+                role=r[2],
+                body=body,
+                tier=r[4],
+                is_test_traffic=bool(r[5]),
+            )
+        )
     return out
 
 
@@ -690,14 +1204,17 @@ def pending_repair_ack(*, path: Path | None = None) -> RepairAck | None:
     return RepairAck(id=row[0], kind=row[1], ts=row[2]) if row else None
 
 
-def mark_repair_acked(ack_id: str, *, now: _dt.datetime | None = None, path: Path | None = None) -> None:
+def mark_repair_acked(
+    ack_id: str, *, now: _dt.datetime | None = None, path: Path | None = None
+) -> None:
     """Mark an ack fired AND retire any other outstanding acks (ack once, never a backlog)."""
     if not telemetry_enabled():
         return
     try:
         with _connect(path) as conn:
-            conn.execute("UPDATE repair_acks SET acked=1, acked_ts=? WHERE acked=0",
-                         (_now_iso(now),))
+            conn.execute(
+                "UPDATE repair_acks SET acked=1, acked_ts=? WHERE acked=0", (_now_iso(now),)
+            )
     except sqlite3.Error as exc:
         _log.warning("mark_repair_acked failed: %s", type(exc).__name__)
 
@@ -735,7 +1252,9 @@ def late_night_signal(
         return DependencySignal(window_days=window_days, threshold=threshold)
     count = sum(1 for (h,) in rows if h in NIGHT_HOURS_IST)
     return DependencySignal(
-        late_night_count=count, window_days=window_days, threshold=threshold,
+        late_night_count=count,
+        window_days=window_days,
+        threshold=threshold,
         flagged=count >= threshold,
     )
 
@@ -819,7 +1338,11 @@ def get_notion_page_id(session_id: str, db_kind: str, *, path: Path | None = Non
 
 
 def set_notion_page_id(
-    session_id: str, db_kind: str, page_id: str, *, now: _dt.datetime | None = None,
+    session_id: str,
+    db_kind: str,
+    page_id: str,
+    *,
+    now: _dt.datetime | None = None,
     path: Path | None = None,
 ) -> None:
     if not telemetry_enabled():
@@ -903,10 +1426,17 @@ def window_snapshot(
             ).fetchall()
             for sid, started, date_ist, hour_ist, is_test in sess_rows:
                 open_mood, close_mood = _session_moods_conn(conn, sid)
-                snap.sessions.append(WindowSession(
-                    id=sid, started_ts=started, date_ist=date_ist, hour_ist=hour_ist,
-                    is_test_traffic=bool(is_test), open_mood=open_mood, close_mood=close_mood,
-                ))
+                snap.sessions.append(
+                    WindowSession(
+                        id=sid,
+                        started_ts=started,
+                        date_ist=date_ist,
+                        hour_ist=hour_ist,
+                        is_test_traffic=bool(is_test),
+                        open_mood=open_mood,
+                        close_mood=close_mood,
+                    )
+                )
 
             hw_rows = conn.execute(
                 "SELECT id, title_enc, assigned_date, due, source_session, status, created_ts "
@@ -925,8 +1455,11 @@ def window_snapshot(
                 if is_test:
                     snap.turns_test_traffic += 1
                 snap.tier_counts[tier] = snap.tier_counts.get(tier, 0) + 1
-                if (safety not in (None, "none")) or (dep not in (None, "clean")) \
-                        or (reg not in (None, "clean")):
+                if (
+                    (safety not in (None, "none"))
+                    or (dep not in (None, "clean"))
+                    or (reg not in (None, "clean"))
+                ):
                     snap.turns_flagged += 1
 
             corpus: list[str] = []
@@ -966,7 +1499,9 @@ def window_snapshot(
 # ---------------------------------------------------------------------------
 
 
-def mood_events_between(from_ts: str, to_ts: str, *, path: Path | None = None) -> list[tuple[str, int]]:
+def mood_events_between(
+    from_ts: str, to_ts: str, *, path: Path | None = None
+) -> list[tuple[str, int]]:
     """(ts, mood) mood chips with ``from_ts <= ts <= to_ts`` (ISO8601 Z), oldest→newest."""
     if not telemetry_enabled():
         return []
@@ -980,7 +1515,9 @@ def mood_events_between(from_ts: str, to_ts: str, *, path: Path | None = None) -
         return []
 
 
-def turn_tiers_between(from_ts: str, to_ts: str, *, path: Path | None = None) -> list[tuple[str, str]]:
+def turn_tiers_between(
+    from_ts: str, to_ts: str, *, path: Path | None = None
+) -> list[tuple[str, str]]:
     """(ts, tier) per-turn traces in the window (for risk-event rollups in the export)."""
     if not telemetry_enabled():
         return []
@@ -994,7 +1531,9 @@ def turn_tiers_between(from_ts: str, to_ts: str, *, path: Path | None = None) ->
         return []
 
 
-def sessions_between(from_ts: str, to_ts: str, *, path: Path | None = None) -> list[tuple[str, int]]:
+def sessions_between(
+    from_ts: str, to_ts: str, *, path: Path | None = None
+) -> list[tuple[str, int]]:
     """(id, started_hour_ist) for sessions started within ``from_ts <= started_ts <= to_ts``.
 
     Unlike :func:`window_snapshot` (a trailing now-anchored window), this honours an explicit

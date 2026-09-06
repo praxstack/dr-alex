@@ -23,16 +23,10 @@
       <button id="help-now" class="help-now" type="button" aria-label="I need help right now">
         I need help right now
       </button>
+      <button id="session-end" class="icon-btn" type="button" aria-label="End session">End</button>
       <button id="theme-toggle" class="icon-btn" type="button" aria-label="Toggle light or dark theme">◐</button>
     </div>
   </header>
-
-  <!-- WebAuthn nag (D3 rider 3) — shown every open until a passkey is registered -->
-  <div id="passkey-nag" class="nag" role="status" hidden>
-    <span>Add a Face&nbsp;ID / passkey lock so a picked-up phone still can't open The Room.</span>
-    <button id="passkey-register" class="nag-btn" type="button">Set up passkey</button>
-    <button id="passkey-dismiss" class="nag-x" type="button" aria-label="Dismiss for now">×</button>
-  </div>
 
   <!-- Pairing screen (shown until this device is paired) -->
   <section id="pair-screen" class="pair" hidden>

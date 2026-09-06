@@ -21,9 +21,8 @@ _ALPHA = (
     + "A quiet lighthouse stands over the calm water. "
     + ("Sitting with the breath, noticing thoughts come and go. " * 60)
 )
-_BETA = (
-    "Procrastination is the gap between intention and action. "
-    + ("Deadline motivation delay task avoidance willpower. " * 80)
+_BETA = "Procrastination is the gap between intention and action. " + (
+    "Deadline motivation delay task avoidance willpower. " * 80
 )
 
 
@@ -34,15 +33,31 @@ def tiny(tmp_path, monkeypatch):
     (corpus / "alpha.txt").write_text(_ALPHA, encoding="utf-8")
     (corpus / "beta.txt").write_text(_BETA, encoding="utf-8")
     specs = (
-        BookSpec(slug="alpha", title="Alpha Book", short_title="Alpha",
-                 authors="A. One", filename="alpha.txt"),
-        BookSpec(slug="beta", title="Beta Book", short_title="Beta",
-                 authors="B. Two", filename="beta.txt"),
+        BookSpec(
+            slug="alpha",
+            title="Alpha Book",
+            short_title="Alpha",
+            authors="A. One",
+            filename="alpha.txt",
+        ),
+        BookSpec(
+            slug="beta",
+            title="Beta Book",
+            short_title="Beta",
+            authors="B. Two",
+            filename="beta.txt",
+        ),
     )
     excluded = (
-        BookSpec(slug="broken", title="Broken Book", short_title="Broken",
-                 authors="X", filename=None, included=False,
-                 exclusion_reason="no usable text — broken extraction"),
+        BookSpec(
+            slug="broken",
+            title="Broken Book",
+            short_title="Broken",
+            authors="X",
+            filename=None,
+            included=False,
+            exclusion_reason="no usable text — broken extraction",
+        ),
     )
     monkeypatch.setattr(retriever.manifest, "included_books", lambda: specs)
     monkeypatch.setattr(retriever.manifest, "excluded_books", lambda: excluded)
@@ -62,6 +77,7 @@ def test_build_indexes_included_and_sets_perms(tiny) -> None:
     assert stats.total_chunks > 0
     assert db.exists()
     import os
+
     assert oct(os.stat(db).st_mode)[-3:] == "600"
     assert oct(os.stat(db.parent).st_mode)[-3:] == "700"
 
@@ -70,11 +86,22 @@ def test_build_warns_loudly_for_excluded(tmp_path, monkeypatch, caplog) -> None:
     corpus = tmp_path / "corpus"
     corpus.mkdir()
     (corpus / "alpha.txt").write_text(_ALPHA, encoding="utf-8")
-    specs = (BookSpec(slug="alpha", title="Alpha Book", short_title="Alpha",
-                      authors="A", filename="alpha.txt"),)
-    excluded = (BookSpec(slug="broken", title="Broken Book", short_title="Broken",
-                         authors="X", filename=None, included=False,
-                         exclusion_reason="no usable text — broken extraction"),)
+    specs = (
+        BookSpec(
+            slug="alpha", title="Alpha Book", short_title="Alpha", authors="A", filename="alpha.txt"
+        ),
+    )
+    excluded = (
+        BookSpec(
+            slug="broken",
+            title="Broken Book",
+            short_title="Broken",
+            authors="X",
+            filename=None,
+            included=False,
+            exclusion_reason="no usable text — broken extraction",
+        ),
+    )
     monkeypatch.setattr(retriever.manifest, "included_books", lambda: specs)
     monkeypatch.setattr(retriever.manifest, "excluded_books", lambda: excluded)
     with caplog.at_level(logging.WARNING, logger="dr_alex.books"):
@@ -189,3 +216,24 @@ def test_bm25_only_default_ignores_embedder_path(tiny) -> None:
     assert r.embedder is None
     hits = r.retrieve("mindfulness", k=2)
     assert hits and hits[0].book_slug == "alpha"
+
+
+def test_devanagari_query_retrieves_devanagari_source(tmp_path, monkeypatch):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "hindi.txt").write_text("ध्यान और श्वास अभ्यास। " * 100)
+    specs = (
+        BookSpec(
+            slug="hindi",
+            title="Synthetic Hindi",
+            short_title="Hindi",
+            authors="Audit",
+            filename="hindi.txt",
+        ),
+    )
+    monkeypatch.setattr(retriever.manifest, "included_books", lambda: specs)
+    monkeypatch.setattr(retriever.manifest, "excluded_books", lambda: ())
+    db = tmp_path / "index/books.db"
+    retriever.build_index(index_file=db, corpus_dir=corpus)
+    hits = BookRetriever(index_file=db).retrieve("ध्यान")
+    assert hits and hits[0].book_slug == "hindi"

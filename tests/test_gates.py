@@ -32,7 +32,7 @@ def test_fabricated_citation_is_stripped_and_claim_softened() -> None:
         _retrieved(1),
     )
     assert "[B9]" not in r.text
-    assert "[B1]" in r.text          # the real one survives
+    assert "[B1]" in r.text  # the real one survives
     assert "B9" in r.stripped
     # The confident "studies confirm that" opener is softened once its prop is gone.
     assert "Studies confirm" not in r.text
@@ -147,9 +147,24 @@ def test_apply_runs_both_gates() -> None:
 
     # Dependency language triggers regeneration; the regenerated text still gets
     # citation-validated (its fabricated [B9] is stripped against 1 retrieved chunk).
-    out = gates.apply(
-        "I'm always here for you.", _retrieved(1), regenerate=regen
-    )
+    out = gates.apply("I'm always here for you.", _retrieved(1), regenerate=regen)
     assert out.dependency_action == "regenerated"
     assert "[B9]" not in out.text
     assert "B9" in out.stripped_cites
+
+
+def test_register_regeneration_cannot_bypass_dependency_gate():
+    out = gates.apply(
+        "| Action | Detail |\n| --- | --- |\n| Study | Rest |",
+        [],
+        regenerate=lambda _: "I'm always here for you.",
+    )
+    assert not gates.has_dependency_language(out.text)
+    assert out.dependency_action == "replaced"
+
+
+def test_register_fallback_preserves_table_substance():
+    original = "| Action | Duration |\n| --- | --- |\n| Walk outdoors | Ten minutes |"
+    out = gates.apply(original, [], regenerate=lambda _: None)
+    assert "Walk outdoors" in out.text and "Ten minutes" in out.text
+    assert not gates.has_register_violation(out.text)

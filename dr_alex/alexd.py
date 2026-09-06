@@ -28,6 +28,7 @@ import os
 import shutil
 import signal
 import threading as _threading
+import uuid
 from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -49,10 +50,12 @@ from dr_alex import (
 )
 from dr_alex import (
     engine,
+    fanout,
     llm,
     memstore,
     pairing,
     statedb,
+    statefile,
     telemetry,
     timeutil,
     wire,
@@ -64,7 +67,8 @@ from safety.triage import Tier
 _log = logging.getLogger("dr_alex.alexd")
 
 HOST = "127.0.0.1"
-PORT = 8787
+# Keep Cursor's fixed MCP OAuth callback port (8787) free.
+PORT = 18787
 ROOM_DIR = Path(__file__).resolve().parent / "room"
 
 #: The only hosts alexd will ever bind. 0.0.0.0 / LAN / a tunnel address is refused (D3 r1).
@@ -86,7 +90,7 @@ def require_loopback(host: str) -> str:
     if h not in LOOPBACK_HOSTS:
         raise NonLoopbackBindRefused(
             f"alexd binds loopback only (one of {sorted(LOOPBACK_HOSTS)}); refusing host {host!r}. "
-            "Reach the phone via `tailscale serve https / 127.0.0.1:8787`, never by binding "
+            "Reach the phone via `tailscale serve https / 127.0.0.1:18787`, never by binding "
             "0.0.0.0/LAN/a tunnel (council D3 rider 1)."
         )
     return h
@@ -103,7 +107,9 @@ class RoomSession:
     def __init__(self, session_id: str, *, test_traffic: bool) -> None:
         self.session_id = session_id
         self.state = SessionState()
+        self.risk_tier_max = Tier.GREEN
         self.history: list[llm.Message] = []
+        self.transcript: list[dict] = []
         self.system_prompt = engine.system_prompt()
         self.memory_ids: list[str] = []
         self.started_at = _iso_now()
@@ -114,8 +120,50 @@ class RoomSession:
         # thought still reaches one considered turn (D10). Guarded: the flush callback fires
         # from the debounce timer thread.
         self._pending_coalesced: list[str] = []
+        self._pending_fragment_request_ids: list[str] = []
         self._pending_lock = _threading.Lock()
+        self._lock = _threading.RLock()
         self.debounce = _debounce.DebounceBuffer(flush_callback=self._absorb_flush)
+        self._restore()
+
+    def _restore(self) -> None:
+        """Rebuild display history while keeping RED rows out of future model context."""
+        try:
+            rows = statedb.load_transcript(self.session_id)
+            for row in rows:
+                self.transcript.append(
+                    {
+                        "role": row.role,
+                        "text": row.body,
+                        "tier": row.tier,
+                        "ts": row.ts,
+                    }
+                )
+                try:
+                    row_tier = Tier(row.tier or Tier.GREEN.value)
+                    if _tier_rank(row_tier) > _tier_rank(self.risk_tier_max):
+                        self.risk_tier_max = row_tier
+                except ValueError:
+                    pass
+                if row.tier == Tier.RED.value:
+                    continue
+                self.history.append(llm.Message(role=row.role, content=row.body))
+            saved = statedb.load_session_state(self.session_id)
+            self.state.safety_probe_asked = saved.safety_probe_asked
+            self.state.safety_probe_declined = saved.safety_probe_declined
+            if saved.recent_risk:
+                try:
+                    self.state.recent_risk = Tier(saved.recent_risk)
+                except ValueError:
+                    pass
+            # Raw fragments are durable independently from the in-process debounce buffer.
+            # On restart, restore only events not assigned to a completed turn; assigned
+            # events are consumed by the atomic completion transaction.
+            for request_id, fragment in statedb.load_unconsumed_api_event_records(self.session_id):
+                self._pending_coalesced.append(fragment)
+                self._pending_fragment_request_ids.append(request_id)
+        except Exception as exc:  # noqa: BLE001 — restart must remain usable if storage is bad
+            _log.warning("session restore failed: %s", type(exc).__name__)
 
     def _absorb_flush(self, payload: _debounce.FlushPayload) -> None:
         """Timer/cap flush handoff: retain the coalesced text instead of discarding it (D10)."""
@@ -132,6 +180,26 @@ class RoomSession:
             self._pending_coalesced.clear()
             return text
 
+    def remember_fragment_request(self, request_id: str) -> None:
+        with self._pending_lock:
+            if request_id not in self._pending_fragment_request_ids:
+                self._pending_fragment_request_ids.append(request_id)
+
+    def pending_fragment_requests(self) -> list[str]:
+        with self._pending_lock:
+            return list(self._pending_fragment_request_ids)
+
+    def clear_fragment_requests(self, request_ids: list[str]) -> None:
+        if not request_ids:
+            return
+        ids = set(request_ids)
+        with self._pending_lock:
+            self._pending_fragment_request_ids = [
+                request_id
+                for request_id in self._pending_fragment_request_ids
+                if request_id not in ids
+            ]
+
     def assemble_memory(self) -> None:
         """Best-effort session-start memory (G20). Degrades to the base prompt on any error."""
         if not memstore.memory_enabled():
@@ -146,10 +214,15 @@ class RoomSession:
 
 
 _sessions: dict[str, RoomSession] = {}
+_fanout_lock = _threading.Lock()
 
 
 def _iso_now() -> str:
     return timeutil.now_iso()
+
+
+def _tier_rank(tier: Tier) -> int:
+    return {Tier.GREEN: 0, Tier.AMBER: 1, Tier.RED: 2}[tier]
 
 
 def _new_session_id() -> str:
@@ -190,21 +263,122 @@ def _sse(event: dict) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
-def _run_turn_blocking(sess: RoomSession, text: str) -> engine.TurnOutcome:
+def _run_turn_blocking(
+    sess: RoomSession,
+    text: str,
+    *,
+    request_id: str | None = None,
+    request_payload_hash: str | None = None,
+    fragment_request_ids: list[str] | None = None,
+) -> engine.TurnOutcome:
     """Run the SINGLE turn function on a worker thread (it may spawn the model subprocess)."""
-    out = engine.run_turn(
-        text,
-        history=list(sess.history),
-        session=sess.state,
-        session_id=sess.session_id,
-        system_prompt_override=sess.system_prompt,
-        memory_ids=sess.memory_ids,
-    )
-    # Maintain conversation history for GREEN/AMBER turns (RED is not a conversational turn).
-    if out.tier is not Tier.RED:
-        sess.history.append(llm.Message(role="user", content=text))
-        sess.history.append(llm.Message(role="assistant", content=out.text))
-    return out
+    with sess._lock:
+        out = engine.run_turn(
+            text,
+            history=list(sess.history),
+            session=sess.state,
+            session_id=sess.session_id,
+            system_prompt_override=sess.system_prompt,
+            memory_ids=sess.memory_ids,
+            request_id=request_id,
+            request_payload_hash=request_payload_hash,
+            fragment_request_ids=fragment_request_ids,
+        )
+        # Maintain conversation history for GREEN/AMBER turns (RED remains UI-only).
+        replayed = getattr(out, "replayed", False)
+        if not replayed:
+            effective_text = getattr(out, "input_text", None) or text
+            sess.transcript.append(
+                {
+                    "role": "user",
+                    "text": effective_text,
+                    "tier": out.tier.value,
+                    "ts": _iso_now(),
+                }
+            )
+            sess.transcript.append(
+                {
+                    "role": "assistant",
+                    "text": out.text,
+                    "tier": out.tier.value,
+                    "ts": _iso_now(),
+                }
+            )
+        if out.tier is not Tier.RED and not replayed:
+            sess.history.append(llm.Message(role="user", content=effective_text))
+            sess.history.append(llm.Message(role="assistant", content=out.text))
+        if not replayed and _tier_rank(out.tier) > _tier_rank(sess.risk_tier_max):
+            sess.risk_tier_max = out.tier
+        # Session-bound engine turns commit the resume safety flags together with the
+        # completed request/reply. Keep the legacy update for callers that inject an
+        # outcome without a request boundary, but never let a second write failure turn
+        # an atomically committed reply into an apparent failure.
+        if not getattr(out, "request_id", None):
+            try:
+                statedb.update_session_state(
+                    sess.session_id,
+                    safety_probe_asked=sess.state.safety_probe_asked,
+                    safety_probe_declined=sess.state.safety_probe_declined,
+                    recent_risk=sess.state.recent_risk.value if sess.state.recent_risk else None,
+                )
+            except Exception as exc:  # noqa: BLE001 — safety response remains available
+                _log.warning("session safety state save failed: %s", type(exc).__name__)
+        if fragment_request_ids and out.durable:
+            sess.clear_fragment_requests(fragment_request_ids)
+        return out
+
+
+def _finish_session_blocking(sess: RoomSession) -> None:
+    """Flush, finalize, and remove one session while holding its turn lock."""
+    with sess._lock:
+        buffered = sess.debounce.flush_now(sess.session_id)
+        leftover = "\n".join(
+            p for p in (sess.take_pending(), buffered.text if buffered else "") if p
+        ).strip()
+        if leftover:
+            try:
+                _run_turn_blocking(
+                    sess,
+                    leftover,
+                    fragment_request_ids=sess.pending_fragment_requests(),
+                )
+            except Exception as exc:  # noqa: BLE001 — close must not strand the registry
+                _log.warning("session-end leftover turn failed: %s", type(exc).__name__)
+        try:
+            statedb.end_session(sess.session_id)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("end_session telemetry failed: %s", type(exc).__name__)
+        # RED transcript rows remain visible in the local UI, but must never enter the
+        # memory fan-out (which can produce GREEN durable context). Filter before both the
+        # turn list and its user-count/risk decision.
+        safe_rows = [row for row in sess.transcript if row.get("tier") != Tier.RED.value]
+        turns = [(row["role"], row["text"]) for row in safe_rows]
+        user_turns = sum(1 for role, _ in turns if role == "user")
+        if memstore.memory_enabled() and fanout.should_finalize(user_turns, explicit_close=True):
+            with _fanout_lock:
+                try:
+                    marker = statefile.load().marker()
+                    if marker is None:
+                        res = fanout.finalize_session(
+                            turns,
+                            session_id=sess.session_id,
+                            started_at=sess.started_at,
+                            # Keep RED withholding based on the session's strongest
+                            # observed risk even though RED bodies are filtered above.
+                            risk_tier_max=sess.risk_tier_max.value,
+                        )
+                        if res is not None and res.scrub_failed:
+                            _log.warning("session-end fan-out incomplete; marker kept for recovery")
+                    else:
+                        _log.warning("session-end fan-out deferred: another session is pending")
+                except Exception as exc:  # noqa: BLE001 — fan-out has its own recovery marker
+                    _log.warning("session-end fan-out failed: %s", type(exc).__name__)
+        _sessions.pop(sess.session_id, None)
+
+
+def _recover_fanout_blocking() -> None:
+    with _fanout_lock:
+        fanout.recover_if_needed()
 
 
 # ---------------------------------------------------------------------------
@@ -330,6 +504,9 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
 
+    from dr_alex import therapy_api
+
+    therapy_api.register(app)
 
     # -- ungated: static shell + manifest + service worker ----------------
 
@@ -382,17 +559,57 @@ def create_app() -> FastAPI:
         store. Absent-but-lazily-created is NOT a fault. Never raises; ``checks`` is additive.
         """
         checks = _health_checks()
-        return JSONResponse({
-            "ok": all(checks.values()),
-            "service": "alexd",
-            "loopback": True,
-            "checks": checks,
-        })
+        return JSONResponse(
+            {
+                "ok": all(checks.values()),
+                "service": "alexd",
+                "loopback": True,
+                "checks": checks,
+            }
+        )
 
-    # /readyz and /livez are aliases of /healthz — something local polls those
-    # names and logs 404 spam against them; same body, no new logic.
-    app.add_api_route("/readyz", healthz, methods=["GET"])
     app.add_api_route("/livez", healthz, methods=["GET"])
+
+    @app.get("/readyz")
+    async def readyz() -> JSONResponse:
+        import time
+
+        model = llm.model_status()
+        checked = model["checked_at"]
+        ready = (
+            all(_health_checks().values())
+            and model["transport_available"]
+            and model["ok"] is True
+            and checked is not None
+            and time.time() - checked < 900
+        )
+        return JSONResponse(
+            {
+                "ok": ready,
+                "model": model,
+                "probe": "paired POST /model/probe verifies a synthetic completion",
+            },
+            status_code=200 if ready else 503,
+        )
+
+    @app.post("/model/probe", dependencies=[Depends(require_device)])
+    async def model_probe() -> JSONResponse:
+        from safety.triage import TriageResult
+
+        result = await run_in_threadpool(
+            llm.complete,
+            TriageResult(tier=Tier.GREEN),
+            [
+                llm.Message(
+                    role="user",
+                    content="Reply with READY only. This is a synthetic connection check.",
+                )
+            ],
+            system_prompt="Connection check only. Reply READY. No tools or personal context.",
+        )
+        return JSONResponse(
+            {"ok": result.ok, "model": llm.model_status()}, status_code=200 if result.ok else 503
+        )
 
     # -- ungated (pairing-code protected): device pairing exchange --------
 
@@ -412,7 +629,9 @@ def create_app() -> FastAPI:
         try:
             dev = pairing.redeem_pairing_code(code, label=label or None)
         except pairing.PairingLockedOut as exc:
-            raise HTTPException(status_code=429, detail="too many attempts; try again later") from exc
+            raise HTTPException(
+                status_code=429, detail="too many attempts; try again later"
+            ) from exc
         if dev is None:
             raise HTTPException(status_code=401, detail="invalid or expired pairing code")
         return JSONResponse({"device_id": dev.id, "device_token": dev.token})
@@ -424,9 +643,16 @@ def create_app() -> FastAPI:
         payload = await _json(request)
         sess = _get_or_create_session(payload.get("session_id"))
         try:
-            statedb.start_session(sess.session_id, is_test_traffic=sess.test_traffic)
+            session_durable = statedb.start_session(
+                sess.session_id, is_test_traffic=sess.test_traffic
+            )
         except Exception as exc:  # noqa: BLE001 — telemetry never blocks a session
             _log.warning("start_session telemetry failed: %s", type(exc).__name__)
+            session_durable = False
+        try:
+            await run_in_threadpool(_recover_fanout_blocking)
+        except Exception as exc:  # noqa: BLE001 — recovery must never block a new session
+            _log.warning("session recovery failed: %s", type(exc).__name__)
         # Optional arriving mood chip (1–10).
         mood = _as_mood(payload.get("mood"))
         if mood is not None:
@@ -440,11 +666,15 @@ def create_app() -> FastAPI:
         except Exception as exc:  # noqa: BLE001
             _log.warning("repair-ack fetch failed: %s", type(exc).__name__)
             ack = None
-        return JSONResponse({
-            "session_id": sess.session_id,
-            "greeting": engine.greeting(),
-            "repair_ack": ack,
-        })
+        return JSONResponse(
+            {
+                "session_id": sess.session_id,
+                "greeting": engine.greeting(),
+                "repair_ack": ack,
+                "transcript": list(sess.transcript),
+                "durable": session_durable,
+            }
+        )
 
     @app.post("/session/end", dependencies=[Depends(require_device)])
     async def session_end(request: Request) -> JSONResponse:
@@ -454,30 +684,13 @@ def create_app() -> FastAPI:
         mood = _as_mood(payload.get("mood"))
         if sess is not None and mood is not None:
             _record_mood(sess, "close", mood)
-        # D10: drain any coalesced-but-undelivered text before the session is dropped.
-        # Timer/cap flushes park fragments in ``_pending_coalesced`` with no live /turn to
-        # stream them; anything still in the debounce window is folded in too. Without this,
-        # a session that finalizes with pending fragments silently loses that thought. One
-        # final considered turn runs it through the SAME safety-first pipeline — run_turn
-        # re-triages, so a crisis leftover still routes through the RED short-circuit (the
-        # crisis bypass is preserved, not weakened).
         if sess is not None:
-            buffered = sess.debounce.flush_now(sess.session_id)
-            leftover = "\n".join(
-                p for p in (sess.take_pending(), buffered.text if buffered else "") if p
-            ).strip()
-            if leftover:
-                try:
-                    await run_in_threadpool(_run_turn_blocking, sess, leftover)
-                except Exception as exc:  # noqa: BLE001 — finalize must never fail on a leftover turn
-                    # NEVER log ``leftover`` itself (R3) — the exception class only.
-                    _log.warning("session-end leftover turn failed: %s", type(exc).__name__)
-        if sid:
+            await run_in_threadpool(_finish_session_blocking, sess)
+        elif sid:
             try:
                 statedb.end_session(sid)
             except Exception as exc:  # noqa: BLE001
                 _log.warning("end_session telemetry failed: %s", type(exc).__name__)
-            _sessions.pop(sid, None)
         return JSONResponse({"ok": True})
 
     # -- gated: the turn (SSE) --------------------------------------------
@@ -488,13 +701,51 @@ def create_app() -> FastAPI:
         sess = _get_or_create_session(payload.get("session_id"))
         text = str(payload.get("text", "") or "")
         is_fragment = bool(payload.get("fragment", False))
+        request_id = str(payload.get("request_id") or uuid.uuid4())
+        request_hash = statedb.payload_hash(payload)
 
         # G17 debounce + crisis prescreen bypass. A crisis fragment NEVER waits on the window.
         bypass, _reason = crisis_prescreen.should_bypass_debounce(text)
         if is_fragment and not bypass:
-            sess.debounce.push(sess.session_id, text)
+            try:
+                event_status = statedb.record_api_event(
+                    request_id,
+                    session_id=sess.session_id,
+                    body=text,
+                    request_payload_hash=request_hash,
+                    event_type="fragment",
+                )
+            except statedb.RequestPayloadConflict as exc:
+                raise HTTPException(
+                    status_code=409, detail="request id reused with different payload"
+                ) from exc
+            if event_status not in ("recorded", "duplicate"):
+                # A fragment that was not durably recorded must remain retryable. Crisis
+                # bypasses take the final path below so the static crisis card remains
+                # available even with telemetry disabled.
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "durable": False,
+                        "request_id": request_id,
+                        "error": "input was not durably recorded; retry this fragment",
+                    },
+                    status_code=503,
+                )
+            if event_status != "duplicate":
+                sess.remember_fragment_request(request_id)
+                sess.debounce.push(sess.session_id, text)
+
             async def _buffered():
-                yield _sse({"type": "buffered", "pending": sess.debounce.pending_count()})
+                yield _sse(
+                    {
+                        "type": "buffered",
+                        "pending": sess.debounce.pending_count(),
+                        "request_id": request_id,
+                        "durable": event_status in ("recorded", "duplicate"),
+                    }
+                )
+
             return StreamingResponse(_buffered(), media_type="text/event-stream")
 
         # Final fragment (or a lone message, or a crisis bypass): coalesce any buffered
@@ -502,28 +753,92 @@ def create_app() -> FastAPI:
         # Also fold in any earlier timer/cap-flushed fragments that had no live request
         # to stream them (D10 — never silently dropped).
         buffered = sess.debounce.flush_now(sess.session_id)
-        parts = [p for p in (sess.take_pending(),
-                             buffered.text if buffered else "", text) if p]
+        fragment_request_ids = sess.pending_fragment_requests()
+        parts = [p for p in (sess.take_pending(), buffered.text if buffered else "", text) if p]
         coalesced = "\n".join(parts).strip()
 
         if not coalesced.strip():
+
             async def _empty():
                 yield _sse({"type": "done", "tier": "GREEN"})
+
             return StreamingResponse(_empty(), media_type="text/event-stream")
 
+        try:
+            event_status = statedb.record_api_event(
+                request_id,
+                session_id=sess.session_id,
+                body=text,
+                request_payload_hash=request_hash,
+                event_type="turn",
+            )
+        except statedb.RequestPayloadConflict as exc:
+            raise HTTPException(
+                status_code=409, detail="request id reused with different payload"
+            ) from exc
+
+        event_durable = event_status in ("recorded", "duplicate")
+        if (
+            not event_durable
+            and engine.classify(coalesced, recent_risk=sess.state.recent_risk) is not Tier.RED
+        ):
+            # Keep only the already-buffered prefix. The retry supplies ``text`` again;
+            # parking the full coalesced body would append that final text twice.
+            parked = coalesced
+            if text.strip() and parts and parts[-1] == text:
+                parked = "\n".join(parts[:-1]).strip()
+            with sess._pending_lock:
+                if parked:
+                    sess._pending_coalesced.insert(0, parked)
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "durable": False,
+                    "request_id": request_id,
+                    "error": "input was not durably recorded; retry this turn",
+                },
+                status_code=503,
+            )
+
         async def _stream():
-            out = await run_in_threadpool(_run_turn_blocking, sess, coalesced)
+            out = await run_in_threadpool(
+                _run_turn_blocking,
+                sess,
+                coalesced,
+                request_id=request_id,
+                request_payload_hash=request_hash,
+                fragment_request_ids=fragment_request_ids,
+            )
             # G16 empty-output guard — never stream an empty reply.
             safe_text, was_empty = wire.empty_output_guard(out.text)
             # G16 wire-decision audit — ONE structured, body-free line per turn.
             wire.audit_turn(
-                tier=out.tier, safety_path_taken=out.safety_action,
-                chunk_ids=out.chunk_ids, memory_ids=out.memory_ids, empty_guarded=was_empty,
+                tier=out.tier,
+                safety_path_taken=out.safety_action,
+                chunk_ids=out.chunk_ids,
+                memory_ids=out.memory_ids,
+                empty_guarded=was_empty,
             )
-            yield _sse({"type": "meta", "tier": out.tier.value, "crisis": out.tier is Tier.RED})
+            yield _sse(
+                {
+                    "type": "meta",
+                    "tier": out.tier.value,
+                    "crisis": out.tier is Tier.RED,
+                    "request_id": request_id,
+                    "durable": out.durable and event_durable,
+                    "replayed": out.replayed,
+                }
+            )
             for piece in engine.chunk_text(safe_text):
                 yield _sse({"type": "token", "text": piece})
-            yield _sse({"type": "done", "tier": out.tier.value})
+            yield _sse(
+                {
+                    "type": "done",
+                    "tier": out.tier.value,
+                    "request_id": request_id,
+                    "durable": out.durable and event_durable,
+                }
+            )
 
         return StreamingResponse(_stream(), media_type="text/event-stream")
 
@@ -541,10 +856,12 @@ def create_app() -> FastAPI:
         if mood is not None:
             _record_mood(sess, "open", mood)
         # A FIXED, non-interpolated opener (no therapy data on this path).
-        return JSONResponse({
-            "session_id": sess.session_id,
-            "opener": "Winding down? No agenda — how was today, honestly? Even a word or two is enough.",
-        })
+        return JSONResponse(
+            {
+                "session_id": sess.session_id,
+                "opener": "Winding down? No agenda — how was today, honestly? Even a word or two is enough.",
+            }
+        )
 
     # -- gated: homework --------------------------------------------------
 
@@ -555,11 +872,20 @@ def create_app() -> FastAPI:
         except Exception as exc:  # noqa: BLE001
             _log.warning("open_homework failed: %s", type(exc).__name__)
             items = []
-        return JSONResponse({"homework": [
-            {"id": h.id, "title": h.title, "assigned_date": h.assigned_date,
-             "due": h.due, "status": h.status}
-            for h in items
-        ]})
+        return JSONResponse(
+            {
+                "homework": [
+                    {
+                        "id": h.id,
+                        "title": h.title,
+                        "assigned_date": h.assigned_date,
+                        "due": h.due,
+                        "status": h.status,
+                    }
+                    for h in items
+                ]
+            }
+        )
 
     @app.post("/homework/{hw_id}/done", dependencies=[Depends(require_device)])
     async def homework_done(hw_id: str) -> JSONResponse:
@@ -601,28 +927,19 @@ def create_app() -> FastAPI:
 
         res = await run_in_threadpool(_run)
         if not res.ok:
-            return JSONResponse({"ok": False, "error": res.error or "export failed"}, status_code=400)
-        return JSONResponse({
-            "ok": True,
-            "redaction": res.redaction,
-            "range": {"from": res.from_date, "to": res.to_date},
-            "markdown_path": res.markdown_path,
-            "html_path": res.html_path,
-            "note": "Generated on the Mac. Open the HTML and print-to-PDF; nothing was sent.",
-        })
-
-    # -- gated: WebAuthn registration stub (D3 rider 3) -------------------
-
-    @app.post("/webauthn/register", dependencies=[Depends(require_device)])
-    async def webauthn_register() -> JSONResponse:
-        """Stub the passkey registration the tailscale HTTPS origin will make real.
-
-        On the plain-loopback dev origin this just acknowledges; the PWA nags every open until
-        registration succeeds (D3 rider 3). Over ``tailscale serve`` (HTTPS) the browser's real
-        WebAuthn ceremony replaces this stub.
-        """
-        return JSONResponse({"ok": True, "stub": True,
-                             "note": "Passkey registration is real over the tailscale HTTPS origin."})
+            return JSONResponse(
+                {"ok": False, "error": res.error or "export failed"}, status_code=400
+            )
+        return JSONResponse(
+            {
+                "ok": True,
+                "redaction": res.redaction,
+                "range": {"from": res.from_date, "to": res.to_date},
+                "markdown_path": res.markdown_path,
+                "html_path": res.html_path,
+                "note": "Generated on the Mac. Open the HTML and print-to-PDF; nothing was sent.",
+            }
+        )
 
     return app
 
@@ -727,7 +1044,10 @@ def _configure_daemon_logging() -> None:
             pass
         target = d / "alexd.log"
         rotating = RotatingFileHandler(
-            target, maxBytes=_LOG_MAX_BYTES, backupCount=_LOG_BACKUPS, encoding="utf-8",
+            target,
+            maxBytes=_LOG_MAX_BYTES,
+            backupCount=_LOG_BACKUPS,
+            encoding="utf-8",
         )
         rotating.setFormatter(fmt)
         rotating._dralex_audit_sink = True  # type: ignore[attr-defined]

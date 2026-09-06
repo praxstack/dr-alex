@@ -70,8 +70,9 @@ _SAFE_REPLACE = "warm, steady, grounded coaching companion"
 
 
 def _propose_safe(_persona_text: str) -> improve.ProposedEdit:
-    return improve.ProposedEdit(summary="warmer opening descriptor",
-                                find=_SAFE_FIND, replace=_SAFE_REPLACE)
+    return improve.ProposedEdit(
+        summary="warmer opening descriptor", find=_SAFE_FIND, replace=_SAFE_REPLACE
+    )
 
 
 def _gen_persona_aware(persona: str, prompt: str) -> str:
@@ -131,9 +132,9 @@ def test_golden_gate_reverts_on_over_firing_green_to_red(monkeypatch) -> None:
 
     monkeypatch.setattr(triage_mod, "triage", over_firing)
     g = improve.check_golden_red_sensitivity(_REAL_ROOT)
-    assert g.sensitivity == 1.0        # RED recall still perfect…
-    assert g.false_red > 0             # …but benign text now false-fires RED
-    assert g.passed is False           # and the gate REJECTS it
+    assert g.sensitivity == 1.0  # RED recall still perfect…
+    assert g.false_red > 0  # …but benign text now false-fires RED
+    assert g.passed is False  # and the gate REJECTS it
     monkeypatch.setattr(triage_mod, "triage", real_triage)
 
 
@@ -147,8 +148,12 @@ def test_keep_accepts_improvement_and_commits(tmp_path) -> None:
     before = _persona(root)
 
     res = improve.run_once(
-        root=root, propose_fn=_propose_safe, generate_fn=_gen_persona_aware,
-        judge_fn=_judge_candidate_better, prompts=_PROMPTS, now=_NOW,
+        root=root,
+        propose_fn=_propose_safe,
+        generate_fn=_gen_persona_aware,
+        judge_fn=_judge_candidate_better,
+        prompts=_PROMPTS,
+        now=_NOW,
     )
 
     assert res.decision == "keep", res.reason
@@ -159,7 +164,7 @@ def test_keep_accepts_improvement_and_commits(tmp_path) -> None:
     assert res.commit_sha
     msg = _git(root, "log", "-1", "--format=%B")
     assert msg.startswith(improve.COMMIT_PREFIX)
-    assert "Co-Authored-By: Claude Opus 4.8" in msg
+    assert "Co-Authored-By: Codex" in msg
     assert _git(root, "rev-list", "--count", "HEAD").strip() == "2"  # seed + this one
     # only persona/dr-alex.md changed in that commit
     changed = _git(root, "show", "--name-only", "--format=", "HEAD").split()
@@ -177,12 +182,17 @@ def test_dry_run_gates_and_benchmarks_but_never_commits(tmp_path) -> None:
     before = _persona(root)
 
     res = improve.run_once(
-        root=root, propose_fn=_propose_safe, generate_fn=_gen_persona_aware,
-        judge_fn=_judge_candidate_better, prompts=_PROMPTS, now=_NOW, dry_run=True,
+        root=root,
+        propose_fn=_propose_safe,
+        generate_fn=_gen_persona_aware,
+        judge_fn=_judge_candidate_better,
+        prompts=_PROMPTS,
+        now=_NOW,
+        dry_run=True,
     )
 
     assert res.decision == "keep" and res.dry_run and res.commit_sha is None
-    assert _persona(root) == before                      # untouched
+    assert _persona(root) == before  # untouched
     assert _git(root, "rev-list", "--count", "HEAD").strip() == "1"  # no new commit
     assert res.candidate_mean == 6.0 and res.baseline_mean == 5.0
 
@@ -236,8 +246,14 @@ def test_revert_when_frozen_section_body_reworded(tmp_path) -> None:
         calls["judge"] += 1
         return 5.0
 
-    res = improve.run_once(root=root, propose_fn=propose_reword, generate_fn=gen,
-                           judge_fn=judge, prompts=_PROMPTS, now=_NOW)
+    res = improve.run_once(
+        root=root,
+        propose_fn=propose_reword,
+        generate_fn=gen,
+        judge_fn=judge,
+        prompts=_PROMPTS,
+        now=_NOW,
+    )
 
     assert res.decision == "revert"
     assert "safety gate" in res.reason.lower()
@@ -255,9 +271,11 @@ def test_revert_when_frozen_invariant_missing(tmp_path) -> None:
 
     # This edit deletes the "route, don't counsel" boundary marker → invariant fails.
     def propose_bad(_p):
-        return improve.ProposedEdit(summary="reword boundary",
-                                    find="route, don't counsel",
-                                    replace="help however feels right")
+        return improve.ProposedEdit(
+            summary="reword boundary",
+            find="route, don't counsel",
+            replace="help however feels right",
+        )
 
     calls = {"gen": 0, "judge": 0}
 
@@ -269,8 +287,14 @@ def test_revert_when_frozen_invariant_missing(tmp_path) -> None:
         calls["judge"] += 1
         return 5.0
 
-    res = improve.run_once(root=root, propose_fn=propose_bad, generate_fn=gen,
-                           judge_fn=judge, prompts=_PROMPTS, now=_NOW)
+    res = improve.run_once(
+        root=root,
+        propose_fn=propose_bad,
+        generate_fn=gen,
+        judge_fn=judge,
+        prompts=_PROMPTS,
+        now=_NOW,
+    )
 
     assert res.decision == "revert"
     assert "safety gate" in res.reason.lower()
@@ -289,12 +313,18 @@ def test_revert_when_golden_red_sensitivity_below_100(tmp_path, monkeypatch) -> 
     # benign (invariants intact), so ONLY the golden gate can fail here. (Patch the module
     # object — the `safety` package re-exports `triage`, which shadows the submodule name.)
     import importlib
+
     triage_mod = importlib.import_module("safety.triage")
     monkeypatch.setattr(triage_mod, "triage", lambda text, *a, **k: triage_mod.Tier.GREEN)
 
-    res = improve.run_once(root=root, propose_fn=_propose_safe,
-                           generate_fn=_gen_persona_aware, judge_fn=_judge_candidate_better,
-                           prompts=_PROMPTS, now=_NOW)
+    res = improve.run_once(
+        root=root,
+        propose_fn=_propose_safe,
+        generate_fn=_gen_persona_aware,
+        judge_fn=_judge_candidate_better,
+        prompts=_PROMPTS,
+        now=_NOW,
+    )
 
     assert res.decision == "revert"
     assert res.golden_sensitivity == 0.0
@@ -309,9 +339,14 @@ def test_revert_when_wai_sr_trend_drops(tmp_path) -> None:
     root = _tmp_repo(tmp_path)
     before = _persona(root)
 
-    res = improve.run_once(root=root, propose_fn=_propose_safe,
-                           generate_fn=_gen_persona_aware, judge_fn=_judge_candidate_worse,
-                           prompts=_PROMPTS, now=_NOW)
+    res = improve.run_once(
+        root=root,
+        propose_fn=_propose_safe,
+        generate_fn=_gen_persona_aware,
+        judge_fn=_judge_candidate_worse,
+        prompts=_PROMPTS,
+        now=_NOW,
+    )
 
     assert res.decision == "revert"
     assert "quality dropped" in res.reason
@@ -324,9 +359,14 @@ def test_revert_when_judge_returns_none(tmp_path) -> None:
     root = _tmp_repo(tmp_path)
     before = _persona(root)
 
-    res = improve.run_once(root=root, propose_fn=_propose_safe,
-                           generate_fn=_gen_persona_aware, judge_fn=lambda t: None,
-                           prompts=_PROMPTS, now=_NOW)
+    res = improve.run_once(
+        root=root,
+        propose_fn=_propose_safe,
+        generate_fn=_gen_persona_aware,
+        judge_fn=lambda t: None,
+        prompts=_PROMPTS,
+        now=_NOW,
+    )
 
     assert res.decision == "revert"
     assert "incomplete" in res.reason or "bias to revert" in res.reason
@@ -347,8 +387,9 @@ def test_revert_when_edit_does_not_apply(tmp_path) -> None:
     before = _persona(root)
 
     def propose_absent(_p):
-        return improve.ProposedEdit(summary="x", find="THIS STRING IS NOT IN THE PERSONA",
-                                    replace="y")
+        return improve.ProposedEdit(
+            summary="x", find="THIS STRING IS NOT IN THE PERSONA", replace="y"
+        )
 
     res = improve.run_once(root=root, propose_fn=propose_absent, prompts=_PROMPTS, now=_NOW)
     assert res.decision == "revert" and "did not apply" in res.reason
@@ -370,8 +411,12 @@ def test_write_guard_blocks_safety_and_gates_files(tmp_path) -> None:
     triage.write_text("ORIGINAL_TRIAGE")
     gates.write_text("ORIGINAL_GATES")
 
-    for bad in (triage, gates, root / "persona" / "evil.md",
-                root / "persona" / ".." / "safety" / "crisis_card.py"):
+    for bad in (
+        triage,
+        gates,
+        root / "persona" / "evil.md",
+        root / "persona" / ".." / "safety" / "crisis_card.py",
+    ):
         with pytest.raises(improve.ImproveSafetyError):
             improve._write_guarded(root, bad, "HACKED")
 
@@ -391,9 +436,14 @@ def test_improve_revert_restores_prior_persona(tmp_path) -> None:
     root = _tmp_repo(tmp_path)
     before = _persona(root)
 
-    kept = improve.run_once(root=root, propose_fn=_propose_safe,
-                            generate_fn=_gen_persona_aware, judge_fn=_judge_candidate_better,
-                            prompts=_PROMPTS, now=_NOW)
+    kept = improve.run_once(
+        root=root,
+        propose_fn=_propose_safe,
+        generate_fn=_gen_persona_aware,
+        judge_fn=_judge_candidate_better,
+        prompts=_PROMPTS,
+        now=_NOW,
+    )
     assert kept.decision == "keep"
     assert _persona(root) != before
 
@@ -422,8 +472,14 @@ def test_audit_log_has_no_transcript_bodies(tmp_path) -> None:
         tag = "CANDIDATE_REPLY" if _SAFE_REPLACE in persona else "BASELINE_REPLY"
         return f"{tag} {secret}"
 
-    res = improve.run_once(root=root, propose_fn=_propose_safe, generate_fn=gen,
-                           judge_fn=_judge_candidate_better, prompts=_PROMPTS, now=_NOW)
+    res = improve.run_once(
+        root=root,
+        propose_fn=_propose_safe,
+        generate_fn=gen,
+        judge_fn=_judge_candidate_better,
+        prompts=_PROMPTS,
+        now=_NOW,
+    )
     assert res.decision == "keep"
     audit_text = improve._audit_path(root).read_text(encoding="utf-8")
     changelog_text = improve._changelog_path(root).read_text(encoding="utf-8")

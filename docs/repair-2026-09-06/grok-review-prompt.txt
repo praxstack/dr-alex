@@ -1,0 +1,90 @@
+You are Grok 4.6, an independent implementation reviewer for a user-authorized repair. Requested reasoning effort: xhigh. This is a bounded SOFTWARE task, not medical advice. You must not read external files, use tools, run commands, access private records, send messages, change authentication, or start other agents. The only evidence is the supplied patch. Do not assert live runtime success.
+
+TASK: Review the supplied patch for correctness. The original defects were (1) register regeneration introduces dependency language after the dependency gate ran; (2) register cleanup deleted table contents; (3) raw SQLite backup omitted committed WAL rows; (4) ASCII-only query tokenization discarded Devanagari. The patch should preserve existing safety rules, all text in table cells, consistent SQLite snapshots, and safe FTS query syntax. Identify a concrete counterexample if an invariant still fails. Do not invent an issue without a trace.
+
+DELIVERABLE: Return one JSON object only with keys verdict (pass or fail or uncertain), findings (array of objects: severity, file, evidence, counterexample, minimal_fix), tests_py (one executable pytest module as a string, containing 2-4 independent held-out tests against dr_alex.gates; no network, subprocess, filesystem writes, credentials, or monkeypatching safety constants), and limitations (array of exact unverified boundaries). Tests must assert actual resulting text and flags, not code strings or mock existence. Think of adversarial formatting and chained regeneration; a test suite merely repeating the four examples below is insufficient.
+
+ACCEPTANCE MATRIX (parent owns grading; leave it open): A exact requested model/effort observable; B JSON parses and follows schema; C findings cite patch evidence; D tests compile and run without prohibited side effects; E tests preserve original safety requirements; F all substantive findings either reproduce or are marked unsupported; G at least one useful new edge case beyond already-known examples. Self-reported pass is not acceptance. Never change the rubric.
+
+PATCH:
+diff --git a/books/retriever.py b/books/retriever.py
+index a4381bf..9eca9bc 100644
+--- a/books/retriever.py
++++ b/books/retriever.py
+@@ -28,6 +28,7 @@ import math
+ import os
+ import re
+ import sqlite3
++import unicodedata
+ from collections.abc import Sequence
+ from dataclasses import dataclass, field
+ from pathlib import Path
+@@ -152,7 +153,10 @@ _TECHNIQUE_EXPANSIONS: dict[str, list[str]] = {
+ 
+ 
+ def _terms(query: str) -> list[str]:
+-    toks = re.findall(r"[a-z0-9]+", query.lower())
++    # Keep combining marks with their letters (e.g. Devanagari vowel signs).
++    normalized = unicodedata.normalize("NFKC", query).casefold()
++    toks = "".join(c if unicodedata.category(c)[0] in "LNM" else " "
++                   for c in normalized).split()
+     return [t for t in toks if len(t) > 1 and t not in _STOP]
+ 
+ 
+diff --git a/dr_alex/backup.py b/dr_alex/backup.py
+index e1b2b05..b274932 100644
+--- a/dr_alex/backup.py
++++ b/dr_alex/backup.py
+@@ -18,7 +18,9 @@ from __future__ import annotations
+ import datetime as _dt
+ import logging
+ import os
++import sqlite3
+ import subprocess
++import tempfile
+ from dataclasses import dataclass, field
+ from pathlib import Path
+ 
+@@ -125,10 +127,15 @@ def run_backup(*, now: _dt.datetime | None = None, repo: Path | None = None) ->
+     if db.exists():
+         snap = dest / f"{ts}-state.db.enc"
+         try:
+-            snap.write_bytes(crypto.encrypt_bytes(db.read_bytes()))
++            with tempfile.TemporaryDirectory(prefix="dr-alex-snapshot-") as tmp:
++                consistent = Path(tmp) / "state.db"
++                with sqlite3.connect(db.as_uri() + "?mode=ro", uri=True) as source:
++                    with sqlite3.connect(consistent) as target:
++                        source.backup(target)
++                snap.write_bytes(crypto.encrypt_bytes(consistent.read_bytes()))
+             os.chmod(snap, 0o600)
+             snapshot_path = str(snap)
+-        except (OSError, crypto.CryptoError) as exc:
++        except (OSError, sqlite3.Error, crypto.CryptoError) as exc:
+             errors.append(f"state.db snapshot failed: {type(exc).__name__}")
+ 
+     pruned = _prune(dest, errors)
+diff --git a/dr_alex/gates.py b/dr_alex/gates.py
+index 36b69dd..4700422 100644
+--- a/dr_alex/gates.py
++++ b/dr_alex/gates.py
+@@ -250,6 +250,8 @@ def strip_register(text: str) -> str:
+             continue
+         if _is_table_line(line):
+             while i < n and _is_table_line(lines[i]):
++                if not _TABLE_SEP.match(lines[i]):
++                    out.append("; ".join(cell.strip() for cell in lines[i].strip().strip("|").split("|")))
+                 i += 1
+             continue
+         head = _CALLOUT_HEAD.match(line)
+@@ -317,6 +319,11 @@ def apply(
+     """
+     boundary = enforce_boundaries(reply, regenerate=regenerate)
+     register = enforce_register(boundary.text, regenerate=regenerate)
++    # A later regeneration is a new candidate: recheck before delivery, without
++    # opening another regeneration cycle that could undo a gate already passed.
++    if has_dependency_language(register.text):
++        boundary = BoundaryResult(_BOUNDARY_LINE, "replaced")
++        register = RegisterResult(boundary.text, register.action)
+     cites = validate_citations(register.text, retrieved)
+     return GateOutcome(
+         text=cites.text,

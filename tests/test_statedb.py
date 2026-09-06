@@ -24,7 +24,9 @@ def test_freetext_columns_are_ciphertext_at_rest(tmp_path) -> None:
     p = _db(tmp_path)
     secret = "call Shreya about the 3am sleep spiral"
     statedb.add_homework(secret, path=p)
-    statedb.record_transcript(session_id="s1", role="user", body="I keep RUMINATING at night", path=p)
+    statedb.record_transcript(
+        session_id="s1", role="user", body="I keep RUMINATING at night", path=p
+    )
 
     raw = p.read_bytes()
     # No free-text plaintext is present anywhere in the db file at rest.
@@ -72,9 +74,9 @@ def test_daily_mood_has_gaps(tmp_path) -> None:
     statedb.record_mood("open", 8, now=now, path=p)
     series = statedb.daily_mood(days=30, now=now, path=p)
     assert len(series) == 30
-    assert series[-1] == 8.0          # today
-    assert series[-3] == 5.0          # two days ago
-    assert series[-2] is None         # the gap day
+    assert series[-1] == 8.0  # today
+    assert series[-3] == 5.0  # two days ago
+    assert series[-2] is None  # the gap day
 
 
 # --- homework --------------------------------------------------------------
@@ -97,8 +99,12 @@ def test_homework_lifecycle(tmp_path) -> None:
 def test_turn_trace_carries_g9_columns(tmp_path) -> None:
     p = _db(tmp_path)
     statedb.record_turn_trace(
-        session_id="s1", tier="AMBER", model_version="claude-fable-5",
-        prompt_hash="abc123", is_test_traffic=True, path=p,
+        session_id="s1",
+        tier="AMBER",
+        model_version="claude-fable-5",
+        prompt_hash="abc123",
+        is_test_traffic=True,
+        path=p,
     )
     with statedb._connect(p) as conn:
         row = conn.execute(
@@ -110,7 +116,9 @@ def test_turn_trace_carries_g9_columns(tmp_path) -> None:
 def test_checkin_dates_for_streaks(tmp_path) -> None:
     p = _db(tmp_path)
     # Two sessions same IST day count once; a different day counts separately.
-    d1 = _dt.datetime(2026, 7, 17, 20, tzinfo=_UTC)  # IST next-morning still 17th? 20:00Z = 01:30 IST 18th
+    d1 = _dt.datetime(
+        2026, 7, 17, 20, tzinfo=_UTC
+    )  # IST next-morning still 17th? 20:00Z = 01:30 IST 18th
     statedb.start_session("a", now=_dt.datetime(2026, 7, 17, 6, tzinfo=_UTC), path=p)
     statedb.start_session("b", now=_dt.datetime(2026, 7, 17, 7, tzinfo=_UTC), path=p)
     statedb.start_session("c", now=_dt.datetime(2026, 7, 18, 6, tzinfo=_UTC), path=p)
@@ -206,3 +214,60 @@ def test_existing_v0_db_upgrades_in_place(tmp_path) -> None:
         assert c.execute("PRAGMA user_version").fetchone()[0] == statedb._SCHEMA_VERSION
         after = c.execute("SELECT COUNT(*) FROM mood_events").fetchone()[0]
     assert after == 2  # pre-existing row survived the in-place upgrade
+
+
+def test_pending_request_retains_assembled_input_and_consumes_fragments_atomically(
+    tmp_path,
+) -> None:
+    p = _db(tmp_path)
+    statedb.start_session("s1", path=p)
+    assert (
+        statedb.record_api_event(
+            "fragment-1", session_id="s1", body="earlier", event_type="fragment", path=p
+        )
+        == "recorded"
+    )
+    pending = statedb.begin_turn_request(
+        "turn-1",
+        session_id="s1",
+        body="earlier\nfinal",
+        fragment_request_ids=["fragment-1"],
+        path=p,
+    )
+    assert pending is not None and pending.input_text == "earlier\nfinal"
+    # The assigned fragment is not visible as an independent pending event, avoiding a
+    # duplicate injection if the process restarts while this request is still pending.
+    assert statedb.load_unconsumed_api_events("s1", path=p) == []
+    assert statedb.complete_turn_request(
+        "turn-1",
+        user_body="earlier\nfinal",
+        reply_body="reply",
+        tier="GREEN",
+        safety_probe_asked=True,
+        recent_risk="GREEN",
+        path=p,
+    )
+    assert statedb.load_session_state("s1", path=p).safety_probe_asked is True
+    with statedb._connect(p) as conn:
+        assert conn.execute(
+            "SELECT consumed FROM api_events WHERE request_id='fragment-1'"
+        ).fetchone() == (1,)
+
+
+def test_pending_request_claims_only_coalesced_fragment_ids(tmp_path) -> None:
+    p = _db(tmp_path)
+    statedb.start_session("s1", path=p)
+    assert statedb.record_api_event("old", session_id="s1", body="old", path=p) == "recorded"
+    assert statedb.record_api_event("late", session_id="s1", body="late", path=p) == "recorded"
+    statedb.begin_turn_request(
+        "turn-1",
+        session_id="s1",
+        body="old\nfinal",
+        fragment_request_ids=["old"],
+        path=p,
+    )
+    with statedb._connect(p) as conn:
+        rows = conn.execute(
+            "SELECT request_id, consumed_by FROM api_events WHERE event_type='fragment' ORDER BY request_id"
+        ).fetchall()
+    assert rows == [("late", None), ("old", "turn-1")]

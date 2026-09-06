@@ -1,6 +1,6 @@
-"""Claude integration — the SINGLE model entrypoint (council Directive 1).
+"""Codex subscription integration — the SINGLE model entrypoint (council Directive 1).
 
-Exactly one function, :func:`complete`, invokes the ``claude`` CLI. Its signature
+Exactly one function, :func:`complete`, invokes the isolated subscription transport. Its signature
 *requires* a :class:`~safety.triage.TriageResult`, so a model reply structurally cannot
 be requested without a deterministic triage verdict, and a RED verdict must short-circuit
 *before* this module is ever reached. ``generate`` and ``stream`` are thin
@@ -12,24 +12,39 @@ run on the *complete* reply before it reaches Prax, so there is no incremental
 token streaming to the screen — the model is called once per turn and its full text is
 gated, then shown. ``stream`` therefore yields the whole reply as a single chunk.
 
-It NEVER raises on the user: a missing ``claude`` binary, a non-zero exit, a timeout, or
+It NEVER raises on the user: a missing subscription transport, a non-zero exit, a timeout, or
 empty output all resolve to a calm fallback message.
 """
 
 from __future__ import annotations
 
+import json
 import os
-import shutil
 import subprocess
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
+from pathlib import Path
 
 from safety import context_guard
 from safety.triage import Tier, TriageResult
 
-CLAUDE_BIN_ENV = "DR_ALEX_CLAUDE_BIN"
+PYTHON_ENV = "DR_ALEX_SUBSCRIPTION_PYTHON"
+DEFAULT_MODEL = "gpt-5.6-sol"
 MODEL_ENV = "DR_ALEX_MODEL"
 DEFAULT_TIMEOUT = 120
+_last_completion: dict = {"ok": None, "checked_at": None}
+
+
+def model_status() -> dict:
+    """Last observed completion, never confused with executable presence."""
+    return {
+        "provider": "openai-codex",
+        "model": DEFAULT_MODEL,
+        "transport_available": model_available(),
+        **_last_completion,
+    }
+
 
 _CALM_FALLBACK = (
     "I'm having trouble reaching my words right now — the model I think with isn't "
@@ -61,16 +76,18 @@ class Message:
     content: str
 
 
-def claude_bin() -> str | None:
-    """Path to the claude CLI (env override, then PATH)."""
-    override = os.environ.get(CLAUDE_BIN_ENV)
+def model_python() -> str | None:
+    """Hermes' installed runtime carries the canonical Codex OAuth transport."""
+    override = os.environ.get(PYTHON_ENV)
     if override:
         return override
-    return shutil.which("claude")
+    runtime = Path.home() / ".hermes/hermes-agent/venv/bin/python"
+    return str(runtime) if runtime.is_file() else None
 
 
-def claude_available() -> bool:
-    return claude_bin() is not None
+def model_available() -> bool:
+    """Local transport availability; not a claim that OAuth/network is ready."""
+    return model_python() is not None
 
 
 # ---------------------------------------------------------------------------
@@ -144,17 +161,6 @@ def build_prompt(
     return "\n".join(parts)
 
 
-def _base_cmd(system_prompt: str, output_format: str) -> list[str]:
-    binary = claude_bin()
-    assert binary is not None  # callers guard with claude_available()
-    cmd = [binary, "-p", "--output-format", output_format,
-           "--append-system-prompt", system_prompt]
-    model = os.environ.get(MODEL_ENV)
-    if model:
-        cmd += ["--model", model]
-    return cmd
-
-
 # ---------------------------------------------------------------------------
 # THE single model entrypoint (Directive 1)
 # ---------------------------------------------------------------------------
@@ -171,7 +177,7 @@ def complete(
     safety_note: str | None = None,
     instruction: str | None = None,
 ) -> LLMResult:
-    """Invoke the model for one turn. The ONLY function that spawns ``claude``.
+    """Invoke the model for one turn. The ONLY function that spawns the subscription transport.
 
     Requires a :class:`TriageResult`; a RED verdict is a programming error here (RED must
     short-circuit in the engine, before retrieval and before this call). Never raises on
@@ -179,43 +185,95 @@ def complete(
 
     ``instruction`` lets non-conversational model tasks (Phase 3 session-end distillation,
     continuity regeneration) reuse this single entrypoint with their own directive rather
-    than opening a second ``claude`` call site (Directive 1). They still pass a
+    than opening a second model call site (Directive 1). They still pass a
     ``TriageResult`` (GREEN — the material they summarize was already triaged per turn).
     """
     if triage.tier is Tier.RED:
         raise ValueError("complete() must never run on a RED turn; RED short-circuits earlier")
 
-    if not claude_available():
+    _last_completion.update(ok=False, checked_at=time.time())
+    if not model_available():
         return LLMResult(
-            ok=False, text=_CALM_FALLBACK, tier=triage.tier,
-            error="claude CLI not found on PATH", used_fallback=True,
+            ok=False,
+            text=_CALM_FALLBACK,
+            tier=triage.tier,
+            error="Codex subscription runtime unavailable",
+            used_fallback=True,
         )
 
     prompt = build_prompt(
-        messages, triage.tier, book_context=book_context,
-        corrective=corrective, safety_note=safety_note, instruction=instruction,
+        messages,
+        triage.tier,
+        book_context=book_context,
+        corrective=corrective,
+        safety_note=safety_note,
+        instruction=instruction,
     )
-    cmd = _base_cmd(system_prompt, "text")
+    cmd = [model_python(), str(Path(__file__).with_name("subscription_backend.py"))]
+    payload = json.dumps(
+        {
+            "system_prompt": system_prompt,
+            "prompt": prompt,
+            "model": os.environ.get(MODEL_ENV) or DEFAULT_MODEL,
+        },
+        ensure_ascii=False,
+    )
     try:
         proc = subprocess.run(
-            cmd, input=prompt, capture_output=True, text=True, timeout=timeout,
+            cmd,
+            input=payload,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
         )
-    except FileNotFoundError as exc:
-        return LLMResult(ok=False, text=_CALM_FALLBACK, tier=triage.tier, error=str(exc), used_fallback=True)
+    except FileNotFoundError:
+        return LLMResult(
+            ok=False,
+            text=_CALM_FALLBACK,
+            tier=triage.tier,
+            error="model transport unavailable",
+            used_fallback=True,
+        )
     except subprocess.TimeoutExpired:
         return LLMResult(
-            ok=False, text=_CALM_FALLBACK, tier=triage.tier,
-            error=f"claude timed out after {timeout}s", used_fallback=True,
+            ok=False,
+            text=_CALM_FALLBACK,
+            tier=triage.tier,
+            error=f"model timed out after {timeout}s",
+            used_fallback=True,
         )
-    except OSError as exc:  # pragma: no cover - defensive
-        return LLMResult(ok=False, text=_CALM_FALLBACK, tier=triage.tier, error=str(exc), used_fallback=True)
+    except OSError:  # pragma: no cover - defensive
+        return LLMResult(
+            ok=False,
+            text=_CALM_FALLBACK,
+            tier=triage.tier,
+            error="model transport unavailable",
+            used_fallback=True,
+        )
 
-    out = (proc.stdout or "").strip()
-    if proc.returncode != 0 or not out:
-        err = (proc.stderr or "").strip() or f"claude exited {proc.returncode}"
-        return LLMResult(ok=False, text=_CALM_FALLBACK, tier=triage.tier, error=err, used_fallback=True)
-
-    return LLMResult(ok=True, text=out, tier=triage.tier)
+    if proc.returncode != 0:
+        return LLMResult(
+            ok=False,
+            text=_CALM_FALLBACK,
+            tier=triage.tier,
+            error=f"model transport exited {proc.returncode}",
+            used_fallback=True,
+        )
+    try:
+        result = json.loads(proc.stdout or "")
+        out = result.get("text", "") if isinstance(result, dict) else ""
+        if not result.get("ok") or not isinstance(out, str) or not out.strip():
+            raise ValueError("empty or failed completion")
+    except (ValueError, AttributeError):
+        return LLMResult(
+            ok=False,
+            text=_CALM_FALLBACK,
+            tier=triage.tier,
+            error="model provider unavailable",
+            used_fallback=True,
+        )
+    _last_completion.update(ok=True, checked_at=time.time())
+    return LLMResult(ok=True, text=out.strip(), tier=triage.tier)
 
 
 # ---------------------------------------------------------------------------
@@ -235,8 +293,12 @@ def generate(
 ) -> LLMResult:
     """Full (non-streaming) response. Thin adapter over the single entrypoint."""
     return complete(
-        TriageResult(tier=tier), messages, system_prompt=system_prompt,
-        timeout=timeout, book_context=book_context, corrective=corrective,
+        TriageResult(tier=tier),
+        messages,
+        system_prompt=system_prompt,
+        timeout=timeout,
+        book_context=book_context,
+        corrective=corrective,
         safety_note=safety_note,
     )
 
@@ -257,7 +319,11 @@ def stream(
     callers can render without special-casing.
     """
     yield complete(
-        TriageResult(tier=tier), messages, system_prompt=system_prompt,
-        timeout=timeout, book_context=book_context, corrective=corrective,
+        TriageResult(tier=tier),
+        messages,
+        system_prompt=system_prompt,
+        timeout=timeout,
+        book_context=book_context,
+        corrective=corrective,
         safety_note=safety_note,
     ).text

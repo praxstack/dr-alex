@@ -1,0 +1,118 @@
+{
+  "grok_review": {
+    "model_requested": "grok-4.6",
+    "reasoning_requested": "xhigh",
+    "status": "reviewed_not_accepted",
+    "criteria": {
+      "model_effort": "PASS: session metadata",
+      "schema": "PASS",
+      "evidence": "PARTIAL: conditional claims lack source support",
+      "test_execution": "FAIL: 2/4, incorrect callback argument",
+      "safety_preserved": "PASS: no policy/constants mutation",
+      "findings_reproduced": "RESOLVED: followup supplied full source; original unsupported claims retained",
+      "new_edge_case": "PASS: blank cells and second table checks passed"
+    },
+    "model_observed": "grok-4.6",
+    "reasoning_observed": "xhigh",
+    "session_id": "01a07661-ce00-7360-b4de-3ad81a623c90",
+    "tests_passed": 2,
+    "tests_failed": 2,
+    "cli_exit": "0; completed, delayed CLI exit after model turn",
+    "findings_assessment": [
+      "F1 unsupported: enforce_boundaries only checks dependency",
+      "F2 action provenance is ambiguous, not a delivery bypass",
+      "F3 lowercase FTS operators not reproduced; single-character terms excluded by existing contract; joiner matching unverified"
+    ],
+    "model_turn_seconds": 719.1
+  },
+  "lifecycle": {
+    "status": "independently_verified",
+    "criteria": [
+      "durable input",
+      "idempotent retry",
+      "restart and refresh",
+      "finalize and recover",
+      "HTTP errors",
+      "regression suite"
+    ],
+    "result": "PASS: all eight independent defect reproductions; final full suite650passed2skipped"
+  },
+  "therapist_maintenance": {
+    "status": "verified_live",
+    "criteria": [
+      "13 imports recovered exact",
+      "pruning disabled",
+      "idempotency",
+      "five jobs execute",
+      "calendar cadence"
+    ],
+    "result": "PASS: 13/222 exact, five jobs,452 routes migrated, gateway/Desktop adopted, native isolated RED0model GREEN1Codex"
+  },
+  "grok_followup": {
+    "status": "evaluated_partial",
+    "model_requested": "grok-4.6",
+    "reasoning_requested": "xhigh",
+    "result": "EVALUATED: 2 accepted safety checks pass; 1 unsupported whitespace assertion rejected",
+    "session_id": "01a0766f-bad1-7440-831c-9e17ebf81acd",
+    "model_observed": "grok-4.6",
+    "reasoning_observed": "xhigh",
+    "tests_passed": 2,
+    "tests_failed": 1,
+    "baseline_tests_passed": 1,
+    "baseline_tests_failed": 2,
+    "accepted_checks": 2,
+    "findings": [
+      "Both missing dependency alternatives reproduced against frozen supplied source; fixed candidate blocks both",
+      "Whitespace assertion expects semicolon-space-semicolon; existing citation tidy returns adjacent semicolons while preserving empty cell. No safety/data loss found. Retained original check and marked unsupported."
+    ],
+    "model_turn_seconds": 248.3
+  },
+  "grok_backup": {
+    "model_requested": "grok-4.6",
+    "reasoning_requested": "xhigh",
+    "model_observed": "grok-4.6",
+    "reasoning_observed": "xhigh",
+    "session_id": "01a0767a-b193-73d3-b9f3-c58ba099bf49",
+    "status": "evaluated",
+    "result": "Reproduced retention, journal and linked Active File issues fixed; eight backup checks pass",
+    "findings": {
+      "retention": "REPRODUCED and fixed; failed generations cannot prune old backups",
+      "partial_bundle": "Prevented: stage then verify and replace, clean failed staging",
+      "journal": "REPRODUCED and fixed: omit -journal",
+      "active_symlink": "REPRODUCED and fixed: archive explicit Active File contents",
+      "directory_symlink": "REJECTED: independent stdlib reproduction enumerated link only, did not traverse target",
+      "recovery_manifest": "Added inside encrypted archive",
+      "directory_permissions": "Failure now explicit, bundle0600"
+    },
+    "model_turn_seconds": 331.8
+  },
+  "historical_recall": {
+    "result": "PASS: six synthetic checks",
+    "native_integration": "Hermes RED zero model/GREEN one actual Codex call in isolated runtime"
+  },
+  "protected_baseline": {
+    "persona": "unchanged SHA256",
+    "golden_crisis_corpus": "unchanged SHA256",
+    "AGENTS": "Concurrent skill-discovery text edit observed; preserved unstaged, no clinical invariants altered by this repair"
+  },
+  "full_suite": {
+    "passed": 650,
+    "skipped": 2,
+    "failed": 0,
+    "seconds": 8.87
+  },
+  "production_probe": {
+    "status": "PASS",
+    "utc": "2026-09-06T11:50:51Z",
+    "provider": "openai-codex",
+    "model": "gpt-5.6-sol",
+    "seconds": 4.8,
+    "context": "literal synthetic prompt; no history or books",
+    "readyz": 200
+  },
+  "packaging": {
+    "build": "PASS: wheel and sdist",
+    "payload_check": "PASS: required modules/assets; private runtime data absent",
+    "check": "tools/check-package.py"
+  }
+}

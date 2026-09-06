@@ -9,7 +9,7 @@ Modes
                           date-ranged markdown + self-contained HTML (print-to-PDF)
     dr-alex review        a default last-30-days export, ready to print-to-PDF
     dr-alex "some text"   one-shot: a single safety-first exchange, printed and done
-    dr-alex serve         run alexd (The Room) in the foreground — http://127.0.0.1:8787/
+    dr-alex serve         run alexd (The Room) in the foreground — http://127.0.0.1:18787/
     dr-alex pair          mint a one-time pairing code for the PWA (single-use, ≤5min)
     dr-alex devices       list paired devices
     dr-alex revoke <id>   revoke a paired device token
@@ -60,9 +60,11 @@ def _eval_command(args: list[str]) -> int:
         return 0
     print(f"eval: scored {len(res.scored)} session(s).")
     for s in res.scored:
-        print(f"  {s.session_id}: score={s.score:.1f}"
-              + (f" z={s.z:.1f}" if s.z is not None else "")
-              + (" [DRIFT]" if s.drift_flagged else ""))
+        print(
+            f"  {s.session_id}: score={s.score:.1f}"
+            + (f" z={s.z:.1f}" if s.z is not None else "")
+            + (" [DRIFT]" if s.drift_flagged else "")
+        )
     for alarm in res.drift_alarms:
         print(f"  drift: {alarm}", file=sys.stderr)
     if res.liveness_banner:
@@ -73,8 +75,8 @@ def _eval_command(args: list[str]) -> int:
 def _improve_command(args: list[str]) -> int:
     """`dr-alex improve --once [--dry-run] | status | revert` — the G22 keep-or-revert loop.
 
-    The launchd job (``tools/launchd/com.dr-alex.improve.plist``) ships DISABLED and needs
-    ``claude`` auth (unavailable from launchd), so this only ever runs when *you* invoke it.
+    The launchd job ships DISABLED. This remains an explicitly invoked operation,
+    using the same Codex subscription transport as ordinary turns.
     """
     from dr_alex import improve
 
@@ -92,10 +94,14 @@ def _improve_command(args: list[str]) -> int:
         if last.get("candidate_summary"):
             print(f"  candidate: {last['candidate_summary']}")
         sg = last.get("safety_gate", {})
-        print(f"  safety gate passed: {sg.get('passed')}  "
-              f"(golden RED sensitivity: {sg.get('golden_red_sensitivity')})")
-        print(f"  WAI-SR baseline→candidate: {last.get('wai_sr_baseline')} → "
-              f"{last.get('wai_sr_candidate')}")
+        print(
+            f"  safety gate passed: {sg.get('passed')}  "
+            f"(golden RED sensitivity: {sg.get('golden_red_sensitivity')})"
+        )
+        print(
+            f"  WAI-SR baseline→candidate: {last.get('wai_sr_baseline')} → "
+            f"{last.get('wai_sr_candidate')}"
+        )
         if last.get("commit_sha"):
             print(f"  commit: {last['commit_sha']}")
         return 0
@@ -117,15 +123,19 @@ def _improve_command(args: list[str]) -> int:
         if res.summary:
             print(f"  candidate: {res.summary}")
         failed = [k for k, v in res.invariants.items() if not v]
-        print(f"  frozen invariants: {'all intact' if not failed else 'MISSING ' + ', '.join(failed)}"
-              f"  |  golden RED sensitivity: {res.golden_sensitivity}")
+        print(
+            f"  frozen invariants: {'all intact' if not failed else 'MISSING ' + ', '.join(failed)}"
+            f"  |  golden RED sensitivity: {res.golden_sensitivity}"
+        )
         print(f"  WAI-SR baseline→candidate: {res.baseline_mean} → {res.candidate_mean}")
         if res.commit_sha:
             print(f"  committed: {res.commit_sha}")
         return 0
 
-    print(f"Unknown improve subcommand: {sub!r}. Use '--once [--dry-run]', 'status', or 'revert'.",
-          file=sys.stderr)
+    print(
+        f"Unknown improve subcommand: {sub!r}. Use '--once [--dry-run]', 'status', or 'revert'.",
+        file=sys.stderr,
+    )
     return 2
 
 
@@ -142,8 +152,10 @@ def _books_command(args: list[str]) -> int:
         print("Ingesting the book corpus into the FTS5/BM25 index…")
         stats = retriever.build_index()
         if stats.discovered:
-            print(f"  auto-discovered {len(stats.discovered)} new drop-in book(s): "
-                  + ", ".join(stats.discovered))
+            print(
+                f"  auto-discovered {len(stats.discovered)} new drop-in book(s): "
+                + ", ".join(stats.discovered)
+            )
         print(f"\nIndexed {stats.books_indexed} books, {stats.total_chunks} chunks.")
         for slug, n in stats.per_book.items():
             print(f"  {slug:28s} {n:>5d} chunks")
@@ -169,19 +181,20 @@ def _books_command(args: list[str]) -> int:
             print(f"             reason: {spec.exclusion_reason}")
         print()
         print(f"Corpus dir: {manifest.corpus_dir()}")
-        print(f"  core books: {sum(1 for s in core if s.included)}  |  "
-              f"user-added: {sum(1 for s in user if s.included)}  |  "
-              f"excluded: {len(manifest.excluded_books())}")
+        print(
+            f"  core books: {sum(1 for s in core if s.included)}  |  "
+            f"user-added: {sum(1 for s in user if s.included)}  |  "
+            f"excluded: {len(manifest.excluded_books())}"
+        )
         if st.exists:
             print(f"Index: {st.path}  ({st.total_chunks} chunks across {len(st.per_book)} books)")
         else:
             print(f"Index: {st.path}  — NOT BUILT. Run: dr-alex books ingest")
-        print("\nAdd a book:  dr-alex books add <file.pdf|file.txt> [--title \"…\"] [--authors \"…\"]")
+        print('\nAdd a book:  dr-alex books add <file.pdf|file.txt> [--title "…"] [--authors "…"]')
         print("…or just drop a .txt/.pdf into the corpus dir and run: dr-alex books ingest")
         return 0
 
-    print(f"Unknown books subcommand: {sub!r}. Use 'ingest', 'status', or 'add'.",
-          file=sys.stderr)
+    print(f"Unknown books subcommand: {sub!r}. Use 'ingest', 'status', or 'add'.", file=sys.stderr)
     return 2
 
 
@@ -189,12 +202,16 @@ def _books_add_command(args: list[str]) -> int:
     """`dr-alex books add <path> [--title "…"] [--authors "…"]` — register + index a book."""
     from books import dropin, extract, retriever
 
-    positionals = [a for i, a in enumerate(args)
-                   if not a.startswith("--")
-                   and not (i > 0 and args[i - 1] in ("--title", "--authors"))]
+    positionals = [
+        a
+        for i, a in enumerate(args)
+        if not a.startswith("--") and not (i > 0 and args[i - 1] in ("--title", "--authors"))
+    ]
     if not positionals:
-        print("Usage: dr-alex books add <file.pdf|file.txt> [--title \"…\"] [--authors \"…\"]",
-              file=sys.stderr)
+        print(
+            'Usage: dr-alex books add <file.pdf|file.txt> [--title "…"] [--authors "…"]',
+            file=sys.stderr,
+        )
         return 2
     path = positionals[0]
     title = _opt(args, "--title")
@@ -225,8 +242,10 @@ def _books_add_command(args: list[str]) -> int:
     print("Rebuilding the index…")
     stats = retriever.build_index()
     n = stats.per_book.get(res.slug, 0)
-    print(f"  indexed {n} chunks (corpus now {stats.books_indexed} books, "
-          f"{stats.total_chunks} chunks total).")
+    print(
+        f"  indexed {n} chunks (corpus now {stats.books_indexed} books, "
+        f"{stats.total_chunks} chunks total)."
+    )
     print(f"Index: {stats.index_path}")
     return 0
 
@@ -287,8 +306,10 @@ def _revoke_command(args: list[str]) -> int:
         print("Usage: dr-alex revoke <device_id>  (see: dr-alex devices)", file=sys.stderr)
         return 2
     ok = pairing.revoke_device(args[0])
-    print("revoked." if ok else "no matching active device (already revoked, or bad id).",
-          file=sys.stderr if not ok else sys.stdout)
+    print(
+        "revoked." if ok else "no matching active device (already revoked, or bad id).",
+        file=sys.stderr if not ok else sys.stdout,
+    )
     return 0 if ok else 1
 
 
@@ -309,8 +330,12 @@ def _checkin_command(args: list[str]) -> int:
 
         posted = checkin.run_checkin_notify()
         # Body-free status only (R3): never echo any therapy data (there is none on this path).
-        print("check-in notification posted." if posted
-              else "check-in notification could not be posted (non-fatal).", file=sys.stderr)
+        print(
+            "check-in notification posted."
+            if posted
+            else "check-in notification could not be posted (non-fatal).",
+            file=sys.stderr,
+        )
         return 0
     if "--install-plist" in args:
         from dr_alex import checkin
@@ -334,8 +359,10 @@ def _export_command(args: list[str]) -> int:
     to = _opt(args, "--to")
     redaction = _opt(args, "--redaction") or "summary"
     if not frm or not to:
-        print("Usage: dr-alex export --from YYYY-MM-DD --to YYYY-MM-DD "
-              "[--redaction summary|full]", file=sys.stderr)
+        print(
+            "Usage: dr-alex export --from YYYY-MM-DD --to YYYY-MM-DD [--redaction summary|full]",
+            file=sys.stderr,
+        )
         return 2
     res = export.export_range(frm, to, redaction=redaction, write=True)
     if not res.ok:
@@ -387,8 +414,10 @@ def _shreya_command(args: list[str]) -> int:
             do_print = True
     res = shreya_packet.generate(window_days=days)
     if res.out_path:
-        print(f"Shreya-prep packet: {res.out_path}"
-              + ("" if res.ok else "  (GENERATION FAILED — see the loud placeholder inside)"))
+        print(
+            f"Shreya-prep packet: {res.out_path}"
+            + ("" if res.ok else "  (GENERATION FAILED — see the loud placeholder inside)")
+        )
     if do_print:
         print("\n" + res.text)
     return 0 if res.ok else 1
@@ -415,18 +444,26 @@ def _notion_command(args: list[str]) -> int:
     if cfg is None:
         print("Notion mirror: DISABLED (no token in the macOS Keychain).")
         print("To enable, run these in a terminal (Prax only — the model never sees the values):")
-        print(f"  security add-generic-password -s {notion.crypto.SERVICE} "
-              f"-a {notion.TOKEN_ACCOUNT}       -w '<notion_integration_token>'")
-        print(f"  security add-generic-password -s {notion.crypto.SERVICE} "
-              f"-a {notion.SESSIONS_DB_ACCOUNT} -w '<sessions_database_id>'")
-        print(f"  security add-generic-password -s {notion.crypto.SERVICE} "
-              f"-a {notion.HOMEWORK_DB_ACCOUNT} -w '<homework_database_id>'")
+        print(
+            f"  security add-generic-password -s {notion.crypto.SERVICE} "
+            f"-a {notion.TOKEN_ACCOUNT}       -w '<notion_integration_token>'"
+        )
+        print(
+            f"  security add-generic-password -s {notion.crypto.SERVICE} "
+            f"-a {notion.SESSIONS_DB_ACCOUNT} -w '<sessions_database_id>'"
+        )
+        print(
+            f"  security add-generic-password -s {notion.crypto.SERVICE} "
+            f"-a {notion.HOMEWORK_DB_ACCOUNT} -w '<homework_database_id>'"
+        )
         return 0
     print("Notion mirror: ENABLED (token present in Keychain).")
     print(f"  sessions DB configured: {'yes' if cfg.sessions_db else 'NO — set it'}")
     print(f"  homework DB configured: {'yes' if cfg.homework_db else 'NO — set it'}")
-    print(f"  detail level: {notion.config.notion_detail_level()}  "
-          "(RED sessions are always forced to summary + 'reviewed offline')")
+    print(
+        f"  detail level: {notion.config.notion_detail_level()}  "
+        "(RED sessions are always forced to summary + 'reviewed offline')"
+    )
     return 0
 
 

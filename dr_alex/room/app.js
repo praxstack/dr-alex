@@ -26,7 +26,7 @@ var CRISIS = {
 
 var TOKEN_KEY = "dralex_device_token";
 var THEME_KEY = "dralex_theme";
-var PASSKEY_KEY = "dralex_passkey_registered";
+var SESSION_KEY = "dralex_session_id";
 
 var state = { sessionId: null, streaming: false, moodPhase: "open" };
 
@@ -174,31 +174,36 @@ function openHomework() {
 }
 function closeHomework() { $("homework-drawer").hidden = true; $("scrim").hidden = true; }
 
-// --- Prep for Shreya (graceful stub) --------------------------------------
+// --- Prep for Shreya -------------------------------------------------------
 function prepForShreya() {
   api("/export/review", { method: "POST", body: JSON.stringify({}) })
-    .then(function (r) { return r.json(); })
-    .then(function (d) { addMsg("note", (d && d.message) || "Prep for Shreya lands in a later phase."); })
-    .catch(function () { addMsg("note", "Prep for Shreya lands in a later phase."); });
+    .then(function (r) { if (!r.ok) throw new Error("prep failed"); return r.json(); })
+    .then(function (d) {
+      var paths = [d && d.markdown_path, d && d.html_path].filter(Boolean).join(" · ");
+      addMsg("note", (d && d.note) || (paths ? "Prep for Shreya: " + paths : "Prep generated on the Mac."));
+    })
+    .catch(function () { addMsg("note", "I couldn't generate the prep packet right now."); });
 }
 
 // --- The turn (SSE over fetch) --------------------------------------------
 function sendTurn(text) {
   if (!text.trim() || state.streaming) return;
+  var originalText = text;
   addMsg("you", text);
-  $("input").value = "";
-  autoGrow();
   state.streaming = true;
   $("send").disabled = true;
   var alexBody = addMsg("alex", "");
   alexBody.parentNode.classList.add("typing");
   alexBody.textContent = "…";
   var acc = "";
-  var isCrisis = false;
+  var completed = false;
+  var durable = false;
 
-  api("/turn", { method: "POST", body: JSON.stringify({ session_id: state.sessionId, text: text }) })
+  api("/turn", { method: "POST", body: JSON.stringify({ session_id: state.sessionId, text: text,
+    request_id: (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : String(Date.now()) }) })
     .then(function (resp) {
-      if (!resp.body) { return resp.text().then(function () {}); }
+      if (!resp.ok) { throw new Error(resp.status === 401 ? "This device needs pairing again." : "The Room couldn't accept that message."); }
+      if (!resp.body) { throw new Error("The Room returned no response stream."); }
       var reader = resp.body.getReader();
       var decoder = new TextDecoder();
       var buf = "";
@@ -214,7 +219,7 @@ function sendTurn(text) {
             var ev;
             try { ev = JSON.parse(line); } catch (e) { return; }
             if (ev.type === "meta") {
-              isCrisis = !!ev.crisis;
+              durable = ev.durable !== false;
               if (isCrisis) { alexBody.parentNode.classList.add("msg-crisis"); }
               alexBody.parentNode.classList.remove("typing");
               alexBody.textContent = "";
@@ -223,6 +228,9 @@ function sendTurn(text) {
               acc += ev.text;
               alexBody.textContent = acc;
               $("transcript").scrollTop = $("transcript").scrollHeight;
+            } else if (ev.type === "done") {
+              completed = true;
+              durable = durable && ev.durable !== false;
             }
           });
           return pump();
@@ -230,13 +238,20 @@ function sendTurn(text) {
       }
       return pump();
     })
-    .catch(function () {
+    .catch(function (err) {
       alexBody.parentNode.classList.remove("typing");
-      alexBody.textContent = "I couldn't reach my words just now — a hiccup on my end. Try again in a moment.";
+      alexBody.textContent = (err && err.message) || "I couldn't reach my words just now. Try again in a moment.";
     })
     .then(function () {
       state.streaming = false;
       $("send").disabled = false;
+      if (completed && durable) {
+        $("input").value = "";
+      } else {
+        $("input").value = originalText;
+        addMsg("note", "Your message is still in the composer — retry when ready.");
+      }
+      autoGrow();
       if (!acc) { alexBody.parentNode.classList.remove("typing"); }
     });
 }
@@ -245,31 +260,6 @@ function autoGrow() {
   var ta = $("input");
   ta.style.height = "auto";
   ta.style.height = Math.min(ta.scrollHeight, 140) + "px";
-}
-
-// --- WebAuthn nag (D3 rider 3) --------------------------------------------
-function passkeyRegistered() { try { return localStorage.getItem(PASSKEY_KEY) === "1"; } catch (e) { return false; } }
-function maybeShowNag() { $("passkey-nag").hidden = passkeyRegistered(); }
-function registerPasskey() {
-  var done = function () {
-    try { localStorage.setItem(PASSKEY_KEY, "1"); } catch (e) {}
-    api("/webauthn/register", { method: "POST", body: "{}" }).catch(function () {});
-    $("passkey-nag").hidden = true;
-  };
-  // On the tailscale HTTPS origin this becomes a real ceremony; on plain loopback we stub it.
-  if (window.PublicKeyCredential && window.isSecureContext) {
-    try {
-      navigator.credentials.create({
-        publicKey: {
-          challenge: new Uint8Array(16),
-          rp: { name: "The Room" },
-          user: { id: new Uint8Array(8), name: "prax", displayName: "Prax" },
-          pubKeyCredParams: [{ type: "public-key", alg: -7 }],
-          timeout: 20000
-        }
-      }).then(done).catch(done);
-    } catch (e) { done(); }
-  } else { done(); }
 }
 
 // --- Pairing ---------------------------------------------------------------
@@ -310,16 +300,36 @@ function submitPairing() {
 function startSession() {
   showRoom();
   buildMoodChips();
-  api("/session/start", { method: "POST", body: JSON.stringify({}) })
+  var prior = null;
+  try { prior = localStorage.getItem(SESSION_KEY); } catch (e) {}
+  api("/session/start", { method: "POST", body: JSON.stringify(prior ? { session_id: prior } : {}) })
     .then(function (r) { if (r.status === 401) { showPairing(); throw new Error("unpaired"); } return r.json(); })
     .then(function (d) {
       state.sessionId = d.session_id;
+      try { localStorage.setItem(SESSION_KEY, state.sessionId); } catch (e) {}
+      (d.transcript || []).forEach(function (row) {
+        addMsg(row.role === "user" ? "you" : (row.tier === "RED" ? "crisis" : "alex"), row.text || "");
+      });
       if (d.repair_ack) addMsg("note", d.repair_ack);
-      addMsg("alex", d.greeting || "It's good to see you. How are you right now, Prax — honestly, this moment?");
+      if (!(d.transcript || []).length) {
+        addMsg("alex", d.greeting || "It's good to see you. How are you right now, Prax — honestly, this moment?");
+      }
       showMood("open");
-      maybeShowNag();
     })
-    .catch(function () {});
+    .catch(function (err) { if (err && err.message !== "unpaired") addMsg("note", "Couldn't reopen the session. Try again shortly."); });
+}
+
+function endSession() {
+  if (!state.sessionId) return;
+  api("/session/end", { method: "POST", body: JSON.stringify({ session_id: state.sessionId }) })
+    .then(function (r) { if (!r.ok) throw new Error("close failed"); })
+    .then(function () {
+      try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+      state.sessionId = null;
+      hideMood();
+      addMsg("note", "Session closed. You can start a new one whenever you're ready.");
+    })
+    .catch(function () { addMsg("note", "I couldn't close the session; your conversation remains open."); });
 }
 
 // --- Wire up ---------------------------------------------------------------
@@ -334,8 +344,7 @@ function init() {
   $("homework-close").addEventListener("click", closeHomework);
   $("scrim").addEventListener("click", closeHomework);
   $("shreya-btn").addEventListener("click", prepForShreya);
-  $("passkey-register").addEventListener("click", registerPasskey);
-  $("passkey-dismiss").addEventListener("click", function () { $("passkey-nag").hidden = true; });
+  $("session-end").addEventListener("click", endSession);
   $("mood-skip").addEventListener("click", hideMood);
   $("pair-submit").addEventListener("click", submitPairing);
   var pairCode = $("pair-code");

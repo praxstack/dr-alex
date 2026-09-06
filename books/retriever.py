@@ -28,6 +28,7 @@ import math
 import os
 import re
 import sqlite3
+import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -47,7 +48,46 @@ _MIN_CANDIDATES = 20
 
 # Tiny stop list — words too common to help select a book.
 _STOP = frozenset(
-    ["a", "an", "and", "the", "of", "to", "in", "on", "for", "with", "is", "are", "be", "it", "this", "that", "i", "you", "my", "me", "we", "our", "how", "what", "when", "where", "why", "can", "do", "does", "about", "into", "over", "under", "from", "as", "at", "or"]
+    [
+        "a",
+        "an",
+        "and",
+        "the",
+        "of",
+        "to",
+        "in",
+        "on",
+        "for",
+        "with",
+        "is",
+        "are",
+        "be",
+        "it",
+        "this",
+        "that",
+        "i",
+        "you",
+        "my",
+        "me",
+        "we",
+        "our",
+        "how",
+        "what",
+        "when",
+        "where",
+        "why",
+        "can",
+        "do",
+        "does",
+        "about",
+        "into",
+        "over",
+        "under",
+        "from",
+        "as",
+        "at",
+        "or",
+    ]
 )
 
 
@@ -66,8 +106,7 @@ class Embedder(Protocol):
     no model downloads happen inside this package.
     """
 
-    def embed(self, texts: Sequence[str]) -> list[list[float]]:
-        ...
+    def embed(self, texts: Sequence[str]) -> list[list[float]]: ...
 
 
 @dataclass(frozen=True)
@@ -130,15 +169,22 @@ def index_exists(path: Path | None = None) -> bool:
 # unknown queries fall through to ordinary phrase/AND/OR matching.
 _TECHNIQUE_EXPANSIONS: dict[str, list[str]] = {
     "thought record": [
-        "thought record", "daily record", "dysfunctional thought",
-        "automatic thought", "cognitive restructuring",
+        "thought record",
+        "daily record",
+        "dysfunctional thought",
+        "automatic thought",
+        "cognitive restructuring",
     ],
     "cognitive distortion": [
-        "cognitive distortion", "thinking error", "distorted thinking",
+        "cognitive distortion",
+        "thinking error",
+        "distorted thinking",
         "cognitive restructuring",
     ],
     "behavioral activation": [
-        "behavioral activation", "behavioural activation", "activity schedule",
+        "behavioral activation",
+        "behavioural activation",
+        "activity schedule",
         "pleasant activities",
     ],
     "opposite action": ["opposite action", "acting opposite"],
@@ -152,7 +198,9 @@ _TECHNIQUE_EXPANSIONS: dict[str, list[str]] = {
 
 
 def _terms(query: str) -> list[str]:
-    toks = re.findall(r"[a-z0-9]+", query.lower())
+    # Keep combining marks with their letters (e.g. Devanagari vowel signs).
+    normalized = unicodedata.normalize("NFKC", query).casefold()
+    toks = "".join(c if unicodedata.category(c)[0] in "LNM" else " " for c in normalized).split()
     return [t for t in toks if len(t) > 1 and t not in _STOP]
 
 
@@ -184,8 +232,8 @@ def _match_candidates(query: str) -> list[str]:
     if key:
         cands.append(" OR ".join(_phrase(v.split()) for v in _TECHNIQUE_EXPANSIONS[key]))
     if len(terms) >= 2:
-        cands.append(_phrase(terms))     # exact phrase of the query's content words
-        cands.append(" ".join(terms))    # implicit AND
+        cands.append(_phrase(terms))  # exact phrase of the query's content words
+        cands.append(" ".join(terms))  # implicit AND
         cands.append(" OR ".join(terms))  # OR (recall)
     else:
         cands.append(terms[0])
@@ -292,8 +340,15 @@ def build_index(
             fts_rows = []
             for ch in chunks:
                 rows.append(
-                    (next_id, ch.chunk_id, ch.book_slug, ch.book_title,
-                     ch.chapter, ch.breadcrumb, ch.text)
+                    (
+                        next_id,
+                        ch.chunk_id,
+                        ch.book_slug,
+                        ch.book_title,
+                        ch.chapter,
+                        ch.breadcrumb,
+                        ch.text,
+                    )
                 )
                 fts_rows.append((next_id, indexed_text(ch)))
                 next_id += 1
@@ -341,9 +396,7 @@ def index_status(index_file: Path | None = None) -> IndexStatus:
     try:
         total = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
         per_book = dict(
-            conn.execute(
-                "SELECT book_slug, COUNT(*) FROM chunks GROUP BY book_slug"
-            ).fetchall()
+            conn.execute("SELECT book_slug, COUNT(*) FROM chunks GROUP BY book_slug").fetchall()
         )
     except sqlite3.Error:  # pragma: no cover - corrupt/foreign db
         return IndexStatus(exists=True, path=index_file)
@@ -409,8 +462,13 @@ class BookRetriever:
                     # bm25() is more-negative-is-better; expose a positive relevance.
                     return [
                         RetrievedChunk(
-                            chunk_id=r[0], book_slug=r[1], book_title=r[2],
-                            chapter=r[3], breadcrumb=r[4], text=r[5], score=-float(r[6]),
+                            chunk_id=r[0],
+                            book_slug=r[1],
+                            book_title=r[2],
+                            chapter=r[3],
+                            breadcrumb=r[4],
+                            text=r[5],
+                            score=-float(r[6]),
                         )
                         for r in rows
                     ]
@@ -432,9 +490,13 @@ class BookRetriever:
         order = sorted(range(len(cands)), key=lambda i: combined[i], reverse=True)
         return [
             RetrievedChunk(
-                chunk_id=cands[i].chunk_id, book_slug=cands[i].book_slug,
-                book_title=cands[i].book_title, chapter=cands[i].chapter,
-                breadcrumb=cands[i].breadcrumb, text=cands[i].text, score=combined[idx],
+                chunk_id=cands[i].chunk_id,
+                book_slug=cands[i].book_slug,
+                book_title=cands[i].book_title,
+                chapter=cands[i].chapter,
+                breadcrumb=cands[i].breadcrumb,
+                text=cands[i].text,
+                score=combined[idx],
             )
             for idx, i in enumerate(order[:k])
         ]
