@@ -103,11 +103,15 @@ def _write(p: Path, text: str) -> None:
     atomicio.atomic_write_text(p, text, prefix=".Active-File.")
 
 
-def read_text(path: Path | None = None) -> str | None:
+def read_text(path: Path | None = None, *, strict: bool = False) -> str | None:
     p = active_file_path(path)
     try:
         return p.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
     except OSError:
+        if strict:
+            raise
         return None
 
 
@@ -335,7 +339,8 @@ def update_from_digest(
     """
     now = now or _dt.datetime.now(_dt.UTC)
     p = active_file_path(path)
-    existing = read_text(p) or ""
+    # A failed read must not turn an existing human-owned record into a blank scaffold.
+    existing = read_text(p, strict=True) or ""
     sections = _split_sections(existing)
 
     identity = _section(sections, _H_IDENTITY, _DEFAULT_IDENTITY)

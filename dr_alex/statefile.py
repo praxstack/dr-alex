@@ -8,8 +8,11 @@ Holds only the small facts memory needs BETWEEN sessions:
                                             fan-out (present ⇒ a fan-out did not complete).
 
 Written 0600 and gitignored (Directive 3 — nothing clinical or derived is ever tracked).
-The file itself is metadata only (timestamps + a short topic label); the topic is a
-non-clinical thread name, never a transcript. Writes are atomic (temp + ``os.replace``) so a
+The recovery digest is Fernet-encrypted before serialization, using the existing state key.
+The remaining fields are metadata; the topic is a non-clinical thread name, never a
+transcript. Valid legacy markers migrate on load. Unreadable markers raise body-free errors
+and block writes so pending recovery is never silently discarded.
+Writes are atomic (temp + ``os.replace``) so a
 *process* crash can never leave a half-written state file; ``fsync`` is best-effort on top, so
 a *machine* crash (power cut / panic) can still lose the last write — ``load`` tolerates that
 by returning empty state rather than raising.
@@ -25,7 +28,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from dr_alex import paths
+from dr_alex import crypto, paths
 
 _STATE_RELPATH = ("data", "session_state.json")
 
@@ -70,37 +73,117 @@ class SessionState:
     unfinalized: dict | None = None  # serialized UnfinalizedMarker, or None
 
     def marker(self) -> UnfinalizedMarker | None:
-        if not self.unfinalized:
-            return None
-        try:
-            return UnfinalizedMarker(**self.unfinalized)
-        except (TypeError, ValueError):
-            return None
+        raw = _decode_marker(self.unfinalized)
+        return UnfinalizedMarker(**raw) if raw is not None else None
+
+
+def _decode_marker(raw: object) -> dict | None:
+    """Validate before any recovery step; never expose payloads in exception chains."""
+    if raw is None:
+        return None
+    try:
+        if not isinstance(raw, dict):
+            raise ValueError
+        raw = dict(raw)
+        if "digest_enc" in raw:
+            if "digest" in raw or not isinstance(raw["digest_enc"], str):
+                raise ValueError
+            token = raw.pop("digest_enc").encode("ascii")
+            raw["digest"] = json.loads(crypto.decrypt(token, create=False))
+        marker = UnfinalizedMarker(**raw)
+        if not (
+            all(
+                isinstance(value, str)
+                for value in (
+                    marker.session_id,
+                    marker.started_at,
+                    marker.end_ts,
+                    marker.inbox_filename,
+                )
+            )
+            and isinstance(marker.digest, dict)
+            and isinstance(marker.remembered, list)
+            and all(type(index) is int and index >= 0 for index in marker.remembered)
+            and isinstance(marker.inbox_written, bool)
+            and isinstance(marker.continuity_written, bool)
+        ):
+            raise ValueError
+        return asdict(marker)
+    except Exception:  # noqa: BLE001 — keyring and decoder errors may include private bodies
+        raise crypto.CryptoError("session recovery marker is unreadable; state preserved") from None
+
+
+def _encode_marker(raw: object) -> dict | None:
+    marker = _decode_marker(raw)
+    if marker is None:
+        return None
+    try:
+        digest = json.dumps(marker.pop("digest"), ensure_ascii=False)
+        marker["digest_enc"] = crypto.encrypt(digest).decode("ascii")
+    except Exception:  # noqa: BLE001 — never leak keyring or serialization exception bodies
+        raise crypto.CryptoError("could not encrypt session recovery marker") from None
+    return marker
 
 
 def load(path: Path | None = None) -> SessionState:
-    """Load state, tolerating a missing or corrupt file (→ empty state, never a crash)."""
-    p = path or state_path()
+    """Load and atomically migrate a valid legacy marker; unreadable markers fail closed.
+
+    Malformed outer JSON retains the historical empty-state read fallback. Writers refuse
+    it, because it may contain a pending marker that cannot safely be replaced.
+    """
+    with _LOCK:
+        return _load(path or state_path())
+
+
+def _read_data(p: Path, *, strict: bool = False) -> dict:
     try:
         raw = p.read_text(encoding="utf-8")
-    except OSError:
-        return SessionState()
+    except FileNotFoundError:
+        return {}
+    except (OSError, UnicodeError):
+        raise crypto.CryptoError("session state is unreadable; state preserved") from None
     try:
         data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError
     except (ValueError, TypeError):
-        return SessionState()
-    if not isinstance(data, dict):
-        return SessionState()
+        if strict:
+            raise crypto.CryptoError("session state is unreadable; state preserved") from None
+        return {}
+    return data
+
+
+def _load(p: Path, *, strict: bool = False) -> SessionState:
+    data = _read_data(p, strict=strict)
+    marker = _decode_marker(data.get("unfinalized"))
+    if marker is not None and "digest_enc" not in data["unfinalized"]:
+        data["unfinalized"] = _encode_marker(marker)
+        _write_data(data, p)
     return SessionState(
         last_session_at=data.get("last_session_at"),
         last_topic=data.get("last_topic"),
         continuity_generated_at=data.get("continuity_generated_at"),
-        unfinalized=data.get("unfinalized") if isinstance(data.get("unfinalized"), dict) else None,
+        unfinalized=marker,
     )
 
 
 def save(state: SessionState, path: Path | None = None) -> None:
     """Atomically write the state file 0600 (parent dir 0700).
+
+    Refuse to overwrite unreadable recovery material, even for a direct save. Merge known
+    fields into the existing object so migration/updates preserve unrelated state fields.
+    """
+    p = path or state_path()
+    with _LOCK:
+        data = _read_data(p, strict=True)
+        _decode_marker(data.get("unfinalized"))
+        data.update(asdict(state))
+        data["unfinalized"] = _encode_marker(state.unfinalized)
+        _write_data(data, p)
+
+
+def _write_data(data: dict, p: Path) -> None:
+    """Write already-encrypted serialized state, while the caller holds ``_LOCK``.
 
     ``fsync`` on the temp and on the parent directory is BEST-EFFORT: today there is no fsync
     at all, so swallowing a flush failure is not a new silent failure, whereas letting it raise
@@ -108,14 +191,13 @@ def save(state: SessionState, path: Path | None = None) -> None:
     ``os.fsync`` does not flush the drive's write cache — that needs ``F_FULLFSYNC`` — so this
     narrows the power-loss window rather than closing it.)
     """
-    p = path or state_path()
     with _LOCK:
         p.parent.mkdir(parents=True, exist_ok=True)
         try:
             os.chmod(p.parent, 0o700)
         except OSError:
             pass
-        payload = json.dumps(asdict(state), ensure_ascii=False, indent=2)
+        payload = json.dumps(data, ensure_ascii=False, indent=2)
         fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=".session_state.", suffix=".tmp")
         closed = False
         try:
@@ -167,7 +249,7 @@ def update(mutate: Callable[[SessionState], None], path: Path | None = None) -> 
     to prevent — call ``update()`` again instead.
     """
     with _LOCK:
-        st = load(path)
+        st = _load(path or state_path(), strict=True)
         mutate(st)
         save(st, path)
         return st
