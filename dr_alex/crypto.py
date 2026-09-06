@@ -57,11 +57,13 @@ def load_or_create_secret(
     account: str,
     *,
     generator: Callable[[], bytes] = _generate_fernet_key,
+    create: bool = True,
 ) -> bytes:
     """Return the Keychain secret for ``account`` under service ``dr-alex``, minting once.
 
     The secret is opaque bytes; it is base64-encoded for Keychain storage and returned as the
-    original bytes. Cached per-process. The generator is only invoked when no secret exists.
+    original bytes. Cached per-process. ``create=False`` refuses a missing secret without
+    replacing it, for recovery reads that must not alter key management on key loss.
     """
     with _lock:
         if account in _cache:
@@ -70,6 +72,8 @@ def load_or_create_secret(
         if existing:
             secret = base64.b64decode(existing)
         else:
+            if not create:
+                raise CryptoError("required encryption key is unavailable")
             secret = generator()
             keyring.set_password(SERVICE, account, base64.b64encode(secret).decode("ascii"))
         _cache[account] = secret
@@ -82,8 +86,8 @@ def reset_cache() -> None:
         _cache.clear()
 
 
-def _fernet() -> Fernet:
-    return Fernet(load_or_create_secret(STATE_KEY_ACCOUNT))
+def _fernet(*, create: bool = True) -> Fernet:
+    return Fernet(load_or_create_secret(STATE_KEY_ACCOUNT, create=create))
 
 
 def encrypt(plaintext: str | None) -> bytes | None:
@@ -93,19 +97,22 @@ def encrypt(plaintext: str | None) -> bytes | None:
     return _fernet().encrypt(plaintext.encode("utf-8"))
 
 
-def decrypt(token: bytes | None) -> str | None:
+def decrypt(token: bytes | None, *, create: bool = True) -> str | None:
     """Decrypt a Fernet token back to text. ``None`` → ``None``.
 
     Raises :class:`CryptoError` on a token this key can't open (corruption / key rotation).
+    ``create=False`` also refuses a missing key without generating a replacement.
     """
     if token is None:
         return None
     if isinstance(token, memoryview):
         token = bytes(token)
     try:
-        return _fernet().decrypt(bytes(token)).decode("utf-8")
+        return _fernet(create=create).decrypt(bytes(token)).decode("utf-8")
     except (InvalidToken, ValueError, TypeError) as exc:
-        raise CryptoError("could not decrypt a free-text column (key mismatch or corruption)") from exc
+        raise CryptoError(
+            "could not decrypt a free-text column (key mismatch or corruption)"
+        ) from exc
 
 
 def encrypt_bytes(data: bytes) -> bytes:
@@ -118,4 +125,6 @@ def decrypt_bytes(token: bytes) -> bytes:
     try:
         return _fernet().decrypt(bytes(token))
     except (InvalidToken, ValueError, TypeError) as exc:
-        raise CryptoError("could not decrypt the backup snapshot (key mismatch or corruption)") from exc
+        raise CryptoError(
+            "could not decrypt the backup snapshot (key mismatch or corruption)"
+        ) from exc
