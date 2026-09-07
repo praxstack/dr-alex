@@ -24,12 +24,14 @@ KEYS = {
 }
 _FAKE_AGE_HEADER = b"age-encryption.org/v1\n"
 _FAKE_IDENTITY = "SYNTHETIC-AGE-IDENTITY\n"
+_FAKE_RECIPIENT = "age1" + "a" * 58
 _NATIVE_AGE = shutil.which("age")
 _NATIVE_AGE_KEYGEN = shutil.which("age-keygen")
 
 
 def _fake_age_run(argv, *, input, **_kwargs):
     if "--encrypt" in argv:
+        assert argv == ["age", "--encrypt", "--recipient", _FAKE_RECIPIENT]
         return subprocess.CompletedProcess(
             argv, 0, stdout=_FAKE_AGE_HEADER + base64.b64encode(input), stderr=b""
         )
@@ -61,7 +63,7 @@ def store(monkeypatch):
 def identity(tmp_path):
     target = tmp_path / "identity.txt"
     target.write_text(_FAKE_IDENTITY, encoding="utf-8")
-    return target, "age1" + "a" * 58
+    return target, _FAKE_RECIPIENT
 
 
 @pytest.fixture
@@ -96,6 +98,12 @@ def _restore(target, identity):
     return cli.main(
         ["recovery-kit", "restore", "--identity", str(identity), "--input", str(target)]
     )
+
+
+@pytest.mark.parametrize("args", [["--encrypt"], ["--encrypt", "--recipient", "age1" + "b" * 58]])
+def test_synthetic_age_rejects_missing_or_substituted_recipient(args):
+    with pytest.raises(AssertionError):
+        _fake_age_run(["age", *args], input=b"synthetic")
 
 
 def test_public_recovery_kit_restores_archive_without_original_store(

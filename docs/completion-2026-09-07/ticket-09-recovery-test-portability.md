@@ -12,3 +12,10 @@ Baseline receipts: `age-absent-baseline.log` and `privileged-reader-baseline.log
 `recovery-test-portability-focused-verbose.log`, `recovery-test-portability-age-absent-verbose.log`,
 `recovery-test-portability-full.log`, and `recovery-test-portability-ruff.log` in the private
 completion directory.
+
+PR12 review found the synthetic age boundary accepted missing or substituted
+recipients. It now checks the exact encryption command and the fixture's requested
+recipient. Two negative cases failed against the original boundary and pass with
+the correction. Production code is unchanged; the native integration still runs.
+The final suite passed 706 tests with 3 skips; Ruff passed. Fixture Git commits
+use a process-scoped signing override, without changing repository signing policy.
