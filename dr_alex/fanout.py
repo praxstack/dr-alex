@@ -78,8 +78,11 @@ def begin(
 ) -> UnfinalizedMarker:
     """Distill the session and persist the unfinalized marker (the point of no half-work)."""
     digest = distill_fn(
-        turns, session_id=session_id, started_at=started_at,
-        risk_tier_max=risk_tier_max, now=now,
+        turns,
+        session_id=session_id,
+        started_at=started_at,
+        risk_tier_max=risk_tier_max,
+        now=now,
     )
     # Phase-4 seam: the user's own mood chips are ground truth — prefer them over the
     # model's inferred mood_in/mood_out when they were recorded this session.
@@ -147,7 +150,8 @@ def complete(
         _log.warning(
             "session-end fan-out INCOMPLETE for %s: %s — marker kept for crash-safe replay "
             "at next session start (nothing dropped)",
-            marker.session_id, "; ".join(incomplete),
+            marker.session_id,
+            "; ".join(incomplete),
         )
     _finalize_state(marker, digest, state_path, keep_marker=bool(incomplete))
 
@@ -196,11 +200,19 @@ def _channel_b_durable(marker, digest, is_red, remember_fn, state_path) -> list[
         # leave this index OUT of the ledger so a later replay retries it, never silently
         # drop the learning. The marker is kept (see _fanout_incomplete) so recovery runs.
         try:
-            res = remember_fn(learning, tags=["therapy"], sensitivity="high",
-                              importance=memstore.IMPORTANCE_MAX, memtype="user")
+            res = remember_fn(
+                learning,
+                tags=["therapy"],
+                sensitivity="high",
+                importance=memstore.IMPORTANCE_MAX,
+                memtype="user",
+            )
         except Exception:  # noqa: BLE001 — a transient store error is recoverable, not fatal
-            _log.warning("durable remember failed (transient) for %s idx=%s — will retry on replay",
-                         marker.session_id, i)
+            _log.warning(
+                "durable remember failed (transient) for %s idx=%s — will retry on replay",
+                marker.session_id,
+                i,
+            )
             continue
         if res.ok:
             if res.id:
@@ -232,7 +244,9 @@ def _channel_c_inbox(marker, digest, scrub_fn, inbox_dir_fn, state_path) -> tupl
     return str(path), False
 
 
-def _regenerate_continuity(marker, digest, now, continuity_fn, save_continuity_fn, state_path) -> None:
+def _regenerate_continuity(
+    marker, digest, now, continuity_fn, save_continuity_fn, state_path
+) -> None:
     """Regenerate the continuity brief once (G8 generated_at stamped by ``continuity_fn``)."""
     if marker.continuity_written:
         return
@@ -316,8 +330,13 @@ def finalize_session(
     """The normal end-of-session path: begin (distill + marker) then complete."""
     now = now or _dt.datetime.now(_dt.UTC)
     marker = begin(
-        turns, session_id=session_id, started_at=started_at,
-        risk_tier_max=risk_tier_max, now=now, distill_fn=distill_fn, state_path=state_path,
+        turns,
+        session_id=session_id,
+        started_at=started_at,
+        risk_tier_max=risk_tier_max,
+        now=now,
+        distill_fn=distill_fn,
+        state_path=state_path,
     )
     return complete(marker, now=now, state_path=state_path, **complete_kwargs)
 

@@ -12,7 +12,7 @@ import pytest
 from dr_alex import fanout, memstore, statefile
 from dr_alex.digest import SessionDigest, Technique
 
-_UTC = _dt.timezone.utc
+_UTC = _dt.UTC
 
 
 def _now() -> _dt.datetime:
@@ -20,13 +20,15 @@ def _now() -> _dt.datetime:
 
 
 def _digest(**over) -> SessionDigest:
-    base = dict(
-        session_id="sess1", started_at="2026-07-18T08:00:00Z", ended_at="2026-07-18T09:00:00Z",
-        risk_tier_max="GREEN",
-        techniques=[Technique("behavioral-activation", "helped")],
-        durable_learnings=["Fact one about Prax.", "Fact two about Prax."],
-        last_topic="morning activation",
-    )
+    base = {
+        "session_id": "sess1",
+        "started_at": "2026-07-18T08:00:00Z",
+        "ended_at": "2026-07-18T09:00:00Z",
+        "risk_tier_max": "GREEN",
+        "techniques": [Technique("behavioral-activation", "helped")],
+        "durable_learnings": ["Fact one about Prax.", "Fact two about Prax."],
+        "last_topic": "morning activation",
+    }
     base.update(over)
     return SessionDigest(**base)
 
@@ -57,13 +59,17 @@ def _seams(tmp_path, remember=None, scrub=None):
         p.write_text(text, encoding="utf-8")
         return p
 
-    return dict(
-        remember_fn=remember or _Recorder(),
-        scrub_fn=scrub or (lambda doc: doc.encode("utf-8")),
-        inbox_dir_fn=lambda: str(inbox),
-        continuity_fn=lambda digest, prior, *, now: "brief text",
-        save_continuity_fn=save_continuity,
-    ), continuity_writes, inbox
+    return (
+        {
+            "remember_fn": remember or _Recorder(),
+            "scrub_fn": scrub or (lambda doc: doc.encode("utf-8")),
+            "inbox_dir_fn": lambda: str(inbox),
+            "continuity_fn": lambda digest, prior, *, now: "brief text",
+            "save_continuity_fn": save_continuity,
+        },
+        continuity_writes,
+        inbox,
+    )
 
 
 def test_normal_finalize_writes_all_channels(tmp_path) -> None:
@@ -72,8 +78,13 @@ def test_normal_finalize_writes_all_channels(tmp_path) -> None:
     seams, continuity_writes, inbox = _seams(tmp_path, remember=rec)
     res = fanout.finalize_session(
         [("user", "hi"), ("assistant", "hey")],
-        session_id="sess1", started_at="2026-07-18T08:00:00Z", risk_tier_max="GREEN",
-        now=_now(), distill_fn=lambda *a, **k: _digest(), state_path=sp, **seams,
+        session_id="sess1",
+        started_at="2026-07-18T08:00:00Z",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(),
+        state_path=sp,
+        **seams,
     )
     # Channel B: both durable learnings written.
     assert len(rec.bodies) == 2
@@ -96,9 +107,14 @@ def test_red_session_withholds_durable_writes(tmp_path) -> None:
     rec = _Recorder()
     seams, _cw, inbox = _seams(tmp_path, remember=rec)
     res = fanout.finalize_session(
-        [("user", "hi")], session_id="sessR", started_at="t", risk_tier_max="RED",
-        now=_now(), distill_fn=lambda *a, **k: _digest(risk_tier_max="RED"),
-        state_path=sp, **seams,
+        [("user", "hi")],
+        session_id="sessR",
+        started_at="t",
+        risk_tier_max="RED",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(risk_tier_max="RED"),
+        state_path=sp,
+        **seams,
     )
     # No durable learnings written on RED (conservative).
     assert rec.bodies == []
@@ -115,8 +131,13 @@ def test_crash_recovery_completes_idempotently(tmp_path) -> None:
 
     # begin() distills + writes the marker; then we "crash" (never call complete).
     fanout.begin(
-        [("user", "hi")], session_id="sess1", started_at="t", risk_tier_max="GREEN",
-        now=_now(), distill_fn=lambda *a, **k: _digest(), state_path=sp,
+        [("user", "hi")],
+        session_id="sess1",
+        started_at="t",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(),
+        state_path=sp,
     )
     assert statefile.load(sp).marker() is not None  # unfinalized
 
@@ -141,8 +162,13 @@ def test_replay_persists_generated_at_even_if_continuity_already_written(tmp_pat
     seams, continuity_writes, _inbox = _seams(tmp_path)
 
     marker = fanout.begin(
-        [("user", "hi")], session_id="sess1", started_at="t", risk_tier_max="GREEN",
-        now=_now(), distill_fn=lambda *a, **k: _digest(), state_path=sp,
+        [("user", "hi")],
+        session_id="sess1",
+        started_at="t",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(),
+        state_path=sp,
     )
     # Simulate: everything done except the final state save (continuity already written).
     marker.remembered = [0, 1]
@@ -165,8 +191,13 @@ def test_partial_remember_ledger_prevents_duplicates(tmp_path) -> None:
     seams, _cw, _inbox = _seams(tmp_path, remember=rec)
 
     marker = fanout.begin(
-        [("user", "hi")], session_id="sess1", started_at="t", risk_tier_max="GREEN",
-        now=_now(), distill_fn=lambda *a, **k: _digest(), state_path=sp,
+        [("user", "hi")],
+        session_id="sess1",
+        started_at="t",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(),
+        state_path=sp,
     )
     # Simulate: index 0 already written before the crash.
     marker.remembered = [0]
@@ -185,8 +216,14 @@ def test_scrub_failure_never_writes_unscrubbed(tmp_path) -> None:
 
     seams, _cw, inbox = _seams(tmp_path, scrub=boom_scrub)
     res = fanout.finalize_session(
-        [("user", "hi")], session_id="sess1", started_at="t", risk_tier_max="GREEN",
-        now=_now(), distill_fn=lambda *a, **k: _digest(), state_path=sp, **seams,
+        [("user", "hi")],
+        session_id="sess1",
+        started_at="t",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(),
+        state_path=sp,
+        **seams,
     )
     assert res.scrub_failed is True
     # No inbox file written when the scrub could not run (privacy fails safe).
@@ -199,8 +236,13 @@ def test_failed_remember_is_retried_on_replay(tmp_path) -> None:
     rec_fail = _Recorder(fail_indices=[1])
     seams, _cw, _inbox = _seams(tmp_path, remember=rec_fail)
     marker = fanout.begin(
-        [("user", "hi")], session_id="sess1", started_at="t", risk_tier_max="GREEN",
-        now=_now(), distill_fn=lambda *a, **k: _digest(), state_path=sp,
+        [("user", "hi")],
+        session_id="sess1",
+        started_at="t",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(),
+        state_path=sp,
     )
     # Complete but DON'T let it clear the marker fully by faking a crash right after
     # remember: re-load the marker to inspect the ledger.
@@ -233,10 +275,15 @@ def test_transient_remember_failure_keeps_session_recoverable(tmp_path) -> None:
     seams, _cw, inbox = _seams(tmp_path, remember=rec)
 
     # First run: the first durable write raises → that index is NOT ledgered → incomplete.
-    res1 = fanout.finalize_session(
+    fanout.finalize_session(
         [("user", "hi"), ("assistant", "hey")],
-        session_id="sess1", started_at="2026-07-18T08:00:00Z", risk_tier_max="GREEN",
-        now=_now(), distill_fn=lambda *a, **k: _digest(), state_path=sp, **seams,
+        session_id="sess1",
+        started_at="2026-07-18T08:00:00Z",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(),
+        state_path=sp,
+        **seams,
     )
     # The session is NOT silently finalized — the marker survives for replay.
     assert statefile.load(sp).marker() is not None
@@ -278,8 +325,13 @@ def test_canonical_record_failure_keeps_recovery_until_local_write_succeeds(
 
     monkeypatch.setattr(records, "update_from_digest", fail_write)
     kwargs = dict(
-        session_id="sess1", started_at="t", risk_tier_max="GREEN", now=_now(),
-        distill_fn=lambda *a, **k: _digest(), state_path=sp, **seams,
+        session_id="sess1",
+        started_at="t",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(),
+        state_path=sp,
+        **seams,
     )
     if crash:
         with pytest.raises(KeyboardInterrupt):
@@ -310,6 +362,7 @@ def test_unreadable_canonical_record_preserves_human_sections_and_pending_recove
     tmp_path, monkeypatch
 ) -> None:
     from pathlib import Path
+
     from dr_alex import config, records
 
     target = records.ensure_scaffold()
@@ -330,9 +383,14 @@ def test_unreadable_canonical_record_preserves_human_sections_and_pending_recove
     with monkeypatch.context() as patch:
         patch.setattr(Path, "read_text", fail_active_read)
         result = fanout.finalize_session(
-            [("user", "synthetic input")], session_id="sess1", started_at="t",
-            risk_tier_max="GREEN", now=_now(), distill_fn=lambda *a, **k: _digest(),
-            state_path=sp, **seams,
+            [("user", "synthetic input")],
+            session_id="sess1",
+            started_at="t",
+            risk_tier_max="GREEN",
+            now=_now(),
+            distill_fn=lambda *a, **k: _digest(),
+            state_path=sp,
+            **seams,
         )
     assert target.read_text() == original
     assert result.active_file_path is None

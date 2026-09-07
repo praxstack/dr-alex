@@ -192,13 +192,15 @@ def _parse_session_entries(sessions_body: str) -> list[tuple[str, str]]:
     chunks = sessions_body.split("\n" + _ENTRY_BOUNDARY)
     # The first chunk may be a leading comment / blank — skip if it isn't an entry.
     for idx, chunk in enumerate(chunks):
-        raw = chunk if (idx == 0 and chunk.startswith(_ENTRY_BOUNDARY)) else (
-            _ENTRY_BOUNDARY + chunk if idx > 0 else chunk
+        raw = (
+            chunk
+            if (idx == 0 and chunk.startswith(_ENTRY_BOUNDARY))
+            else (_ENTRY_BOUNDARY + chunk if idx > 0 else chunk)
         )
         if not raw.startswith(_ENTRY_BOUNDARY):
             continue
         first_line = raw.splitlines()[0]
-        sid = first_line[len(_ENTRY_BOUNDARY):].split("·")[0].strip()
+        sid = first_line[len(_ENTRY_BOUNDARY) :].split("·")[0].strip()
         entries.append((sid, raw.rstrip("\n")))
     return entries
 
@@ -214,8 +216,9 @@ def _render_session_entry(digest: SessionDigest) -> str:
         mood.append(f"out {digest.mood_out}/10")
     lines.append("- mood: " + (" → ".join(mood) if mood else "not recorded"))
     if digest.techniques:
-        lines.append("- techniques: " + ", ".join(
-            f"{t.name} ({t.efficacy})" for t in digest.techniques))
+        lines.append(
+            "- techniques: " + ", ".join(f"{t.name} ({t.efficacy})" for t in digest.techniques)
+        )
     if digest.books_cited:
         lines.append("- books: " + ", ".join(digest.books_cited))
     if digest.threads_open:
@@ -227,7 +230,9 @@ def _render_session_entry(digest: SessionDigest) -> str:
     if digest.key_insight:
         lines.append("- insight: " + digest.key_insight)
     if digest.generation_failed:
-        lines.append("- ⚠ distillation failed — see the inbox digest / raw state.db for this session")
+        lines.append(
+            "- ⚠ distillation failed — see the inbox digest / raw state.db for this session"
+        )
     return "\n".join(lines)
 
 
@@ -311,15 +316,19 @@ def _assemble(
     parts.append(_H_IDENTITY + "\n" + identity.strip() + "\n")
     parts.append(_H_PATTERNS + "\n" + patterns.strip() + "\n")
 
-    sess_body = "\n\n".join(entry for _sid, entry in session_entries) if session_entries else \
-        "_No sessions logged yet._"
+    sess_body = (
+        "\n\n".join(entry for _sid, entry in session_entries)
+        if session_entries
+        else "_No sessions logged yet._"
+    )
     parts.append(_H_SESSIONS + "\n" + sess_body + "\n")
 
     parts.append(_H_HOMEWORK + "\n" + homework.strip() + "\n")
     parts.append(_H_MEDS + "\n" + meds.strip() + "\n")
 
-    threads_body = "\n".join(f"- {t}" for t in open_threads) if open_threads else \
-        "_No open threads._"
+    threads_body = (
+        "\n".join(f"- {t}" for t in open_threads) if open_threads else "_No open threads._"
+    )
     parts.append(_H_THREADS + "\n" + threads_body + "\n")
 
     return "\n".join(parts).rstrip("\n") + "\n"
@@ -364,8 +373,13 @@ def update_from_digest(
     homework = _render_homework(digest, p)
 
     text = _assemble(
-        identity=identity, patterns=patterns, session_entries=entries,
-        homework=homework, meds=meds, open_threads=open_threads, updated_ts=_iso(now),
+        identity=identity,
+        patterns=patterns,
+        session_entries=entries,
+        homework=homework,
+        meds=meds,
+        open_threads=open_threads,
+        updated_ts=_iso(now),
     )
     _write(p, text)
     return p
@@ -378,9 +392,13 @@ def ensure_scaffold(*, now: _dt.datetime | None = None, path: Path | None = None
     if p.exists():
         return p
     text = _assemble(
-        identity=_DEFAULT_IDENTITY, patterns=_DEFAULT_PATTERNS_BODY, session_entries=[],
-        homework="_No homework on the board._", meds=_DEFAULT_MEDS_BODY,
-        open_threads=[], updated_ts=_iso(now),
+        identity=_DEFAULT_IDENTITY,
+        patterns=_DEFAULT_PATTERNS_BODY,
+        session_entries=[],
+        homework="_No homework on the board._",
+        meds=_DEFAULT_MEDS_BODY,
+        open_threads=[],
+        updated_ts=_iso(now),
     )
     _write(p, text)
     return p
