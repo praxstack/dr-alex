@@ -260,6 +260,9 @@ def set_unfinalized(marker: UnfinalizedMarker, path: Path | None = None) -> None
     payload = asdict(marker)
 
     def _set(st: SessionState) -> None:
+        pending = st.marker()
+        if pending is not None and pending.session_id != marker.session_id:
+            raise RuntimeError("another session is already pending recovery")
         st.unfinalized = payload
 
     update(_set, path)

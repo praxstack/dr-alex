@@ -402,3 +402,96 @@ def test_unreadable_canonical_record_preserves_human_sections_and_pending_recove
     assert statefile.load(sp).marker() is None
     assert continuity_writes == ["brief text"]
     assert len(list(inbox.glob("*.md"))) == 1
+
+
+def test_conflicting_finalize_does_not_touch_sinks_and_pending_session_recovers(
+    tmp_path, monkeypatch
+) -> None:
+    sp = tmp_path / "state.json"
+    monkeypatch.setattr(fanout._continuity, "load_continuity_text", lambda: "")
+
+    fanout.begin(
+        [("user", "A")],
+        session_id="A",
+        started_at="tA",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(session_id="A"),
+        state_path=sp,
+    )
+
+    blocked_calls: list[str] = []
+
+    def blocked_remember(*args, **kwargs):
+        blocked_calls.append("remember")
+        return memstore.WriteResult(ok=True, id="B-memory")
+
+    def blocked_scrub(document):
+        blocked_calls.append("scrub")
+        return document.encode("utf-8")
+
+    def blocked_inbox_dir():
+        blocked_calls.append("inbox")
+        return str(tmp_path / "blocked-inbox")
+
+    def blocked_continuity(*args, **kwargs):
+        blocked_calls.append("continuity")
+        return "B brief"
+
+    def blocked_save_continuity(*args, **kwargs):
+        blocked_calls.append("continuity-save")
+
+    def blocked_mirror(*args, **kwargs):
+        blocked_calls.append("mirror")
+        return ("B-active", "create")
+
+    with pytest.raises(RuntimeError):
+        fanout.finalize_session(
+            [("user", "B")],
+            session_id="B",
+            started_at="tB",
+            risk_tier_max="GREEN",
+            now=_now(),
+            distill_fn=lambda *a, **k: _digest(session_id="B"),
+            state_path=sp,
+            remember_fn=blocked_remember,
+            scrub_fn=blocked_scrub,
+            inbox_dir_fn=blocked_inbox_dir,
+            continuity_fn=blocked_continuity,
+            save_continuity_fn=blocked_save_continuity,
+            mirror_fn=blocked_mirror,
+        )
+    assert blocked_calls == []
+    assert statefile.load(sp).marker().session_id == "A"
+
+    recorder_a = _Recorder()
+    seams_a, continuity_a, inbox_a = _seams(tmp_path / "a", remember=recorder_a)
+    recovered = fanout.recover_if_needed(
+        state_path=sp,
+        now=_now(),
+        mirror_fn=lambda digest: ("A-active", None),
+        **seams_a,
+    )
+    assert recovered is not None
+    assert recovered.session_id == "A"
+    assert statefile.load(sp).marker() is None
+    assert len(recorder_a.bodies) == 2
+    assert continuity_a == ["brief text"]
+    assert len(list(inbox_a.glob("*.md"))) == 1
+
+    recorder_b = _Recorder()
+    seams_b, _continuity_b, inbox_b = _seams(tmp_path / "b", remember=recorder_b)
+    completed_b = fanout.finalize_session(
+        [("user", "B")],
+        session_id="B",
+        started_at="tB",
+        risk_tier_max="GREEN",
+        now=_now(),
+        distill_fn=lambda *a, **k: _digest(session_id="B"),
+        state_path=sp,
+        mirror_fn=lambda digest: ("B-active", None),
+        **seams_b,
+    )
+    assert completed_b.session_id == "B"
+    assert len(recorder_b.bodies) == 2
+    assert len(list(inbox_b.glob("*.md"))) == 1
