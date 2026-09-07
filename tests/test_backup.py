@@ -311,7 +311,26 @@ def test_invalid_hermes_generation_preserves_prior_artifacts(
         if failure == "unreadable":
             locked.close()
             locked = None
-            hermes.chmod(0)
+            real_connect = sqlite3.connect
+            source_uri = hermes.resolve().as_uri()
+            other = tmp_path / "hermes-failure.db-other"
+            with sqlite3.connect(other) as unrelated:
+                unrelated.execute("CREATE TABLE marker (value TEXT)")
+                unrelated.execute("INSERT INTO marker VALUES ('delegated')")
+            other_uri = f"{other.resolve().as_uri()}?mode=ro"
+            delegated = []
+
+            def unreadable_source(database, *args, **kwargs):
+                database_uri = str(database)
+                if database_uri == source_uri or database_uri.startswith(f"{source_uri}?"):
+                    raise PermissionError("synthetic unreadable SQLite source")
+                delegated.append(database_uri)
+                return real_connect(database, *args, **kwargs)
+
+            monkeypatch.setattr(sqlite3, "connect", unreadable_source)
+            with sqlite3.connect(other_uri, uri=True) as unrelated:
+                assert unrelated.execute("SELECT value FROM marker").fetchone() == ("delegated",)
+            assert other_uri in delegated
         else:
             locked.execute("BEGIN EXCLUSIVE")
     try:
@@ -331,8 +350,6 @@ def test_invalid_hermes_generation_preserves_prior_artifacts(
     finally:
         if locked is not None:
             locked.close()
-        if hermes.exists():
-            hermes.chmod(0o600)
 
 
 def test_private_sqlite_uses_same_deadline_as_hermes(git_repo, tmp_path, monkeypatch):
