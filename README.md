@@ -40,6 +40,7 @@ work without it.
 | `dr-alex records` | Show the canonical Active File path (creating the scaffold if needed). |
 | `dr-alex notion status` | Whether the Notion mirror is enabled (secrets stay in Keychain). |
 | `dr-alex backup` | Git bundle, WAL-consistent encrypted state snapshot, and encrypted private records archive. |
+| `dr-alex recovery-kit export` / `recovery-kit restore` | Export backup keys to an independent age recipient or restore them to Keychain. Each command requires explicit paths; use `--help`. |
 | `dr-alex eval --once` | G13 nightly eval (normally run by the disabled cron). |
 | `dr-alex improve --once [--dry-run]` / `improve status` / `improve revert` | G22 nightly persona keep-or-revert loop / history / undo last accepted change. |
 | `dr-alex --card` | Print the crisis card (pure, no LLM) and exit. |
@@ -116,8 +117,33 @@ synchronized fallback. When the Mac is unavailable, the Room's cached crisis car
 offline; model chat requires the Mac and its configured subscription connection.
 
 Backups include private continuity, pending session state, records, pairing data and local
-book data in an encrypted archive. Keep the macOS Keychain recovery path: a same-Mac restore
-does not prove recovery after losing the encryption key.
+book data in an encrypted archive.
+
+### Recovery after losing the Mac or Keychain
+
+Choose an independent `age-keygen` public recipient and a storage destination you can access
+without this Mac. Keep the matching private identity separate from the kit. With `age`
+installed, replace these example values with your recipient and paths:
+
+```bash
+dr-alex recovery-kit export --recipient 'age1...' --output /path/to/new-kit.age
+dr-alex recovery-kit restore --identity /path/to/identity.txt --input /path/to/kit.age
+```
+
+Export reads the existing `state-key` and `pairing-key` under the `dr-alex` Keychain service.
+Both must exist and have valid lengths. It writes a 0600 encrypted file in an existing
+directory and refuses an existing output path. It supports native `age-keygen` recipients.
+The destination filesystem must support hard links for atomic publication.
+
+Stop Dr. Alex before restoring keys; another process could create keys during recovery.
+Restore checks the entire kit and existing keys before writing. It refuses conflicting keys
+and skips matching values, so you can retry after a partial Keychain write. Restart Dr. Alex
+after restoration, then verify the matching backup generation before relying on it. Keychain
+continues to own runtime keys. Export a new kit if you rotate either key.
+
+The recovery tests use synthetic archives and temporary identities. Personal key escrow and
+off-device recovery remain unverified until you choose storage, export your kit, and test
+your recovery path.
 
 Current repair evidence and the open subagent evaluation matrix live in
 [docs/repair-2026-09-06](docs/repair-2026-09-06/).
