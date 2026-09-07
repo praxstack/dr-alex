@@ -19,3 +19,9 @@ recipient. Two negative cases failed against the original boundary and pass with
 the correction. Production code is unchanged; the native integration still runs.
 The final suite passed 706 tests with 3 skips; Ruff passed. Fixture Git commits
 use a process-scoped signing override, without changing repository signing policy.
+
+The next review identified another synthetic-boundary gap: it supplied stdout
+without requiring capture_output. The boundary now requires captured output and
+a bounded timeout, and checks the decryption command shape. Both missing and
+false capture flags fail the regression. The final suite passed 708 tests with
+3 skips; Ruff passed. Native production encryption/decryption is unchanged.

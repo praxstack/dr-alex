@@ -29,13 +29,16 @@ _NATIVE_AGE = shutil.which("age")
 _NATIVE_AGE_KEYGEN = shutil.which("age-keygen")
 
 
-def _fake_age_run(argv, *, input, **_kwargs):
+def _fake_age_run(argv, *, input, **kwargs):
+    assert kwargs.get("capture_output") is True
+    assert 0 < kwargs.get("timeout", 0) <= 30
     if "--encrypt" in argv:
         assert argv == ["age", "--encrypt", "--recipient", _FAKE_RECIPIENT]
         return subprocess.CompletedProcess(
             argv, 0, stdout=_FAKE_AGE_HEADER + base64.b64encode(input), stderr=b""
         )
     if "--decrypt" in argv:
+        assert len(argv) == 4 and argv[:3] == ["age", "--decrypt", "--identity"]
         identity = argv[argv.index("--identity") + 1]
         if Path(identity).read_text(encoding="utf-8") != _FAKE_IDENTITY:
             return subprocess.CompletedProcess(argv, 1, stdout=b"", stderr=b"synthetic")
@@ -103,7 +106,18 @@ def _restore(target, identity):
 @pytest.mark.parametrize("args", [["--encrypt"], ["--encrypt", "--recipient", "age1" + "b" * 58]])
 def test_synthetic_age_rejects_missing_or_substituted_recipient(args):
     with pytest.raises(AssertionError):
-        _fake_age_run(["age", *args], input=b"synthetic")
+        _fake_age_run(["age", *args], input=b"synthetic", capture_output=True, timeout=30)
+
+
+@pytest.mark.parametrize("capture", [False, None])
+def test_synthetic_age_requires_captured_output(capture):
+    kwargs = {"timeout": 30}
+    if capture is not None:
+        kwargs["capture_output"] = capture
+    with pytest.raises(AssertionError):
+        _fake_age_run(
+            ["age", "--encrypt", "--recipient", _FAKE_RECIPIENT], input=b"synthetic", **kwargs
+        )
 
 
 def test_public_recovery_kit_restores_archive_without_original_store(
