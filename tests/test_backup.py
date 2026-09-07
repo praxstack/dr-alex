@@ -201,3 +201,176 @@ def test_private_snapshot_excludes_journal_and_copies_active_symlink(
         member = archive.getmember("records/Active-File.md")
         assert member.isfile() and not member.issym()
         assert archive.extractfile(member).read() == b"SYNTHETIC linked content"
+
+
+def test_backup_restores_configured_hermes_commits_from_live_wal(
+    git_repo, tmp_path, monkeypatch, capsys
+):
+    import hashlib
+    import io
+    import json
+    import sqlite3
+    import tarfile
+    from pathlib import Path
+
+    hermes = tmp_path / "therapist" / "history.db"
+    hermes.parent.mkdir()
+    (hermes.parent / "credentials.env").write_text("SYNTHETIC_CREDENTIAL")
+    monkeypatch.setenv("DR_ALEX_HERMES_DB", str(hermes))
+    message = "\t नमस्ते café 🌿\n  exact whitespace \t"
+    with sqlite3.connect(hermes) as live:
+        live.execute("PRAGMA journal_mode=WAL")
+        live.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, content TEXT)")
+        live.commit()
+        live.execute("PRAGMA wal_checkpoint(TRUNCATE)")  # fixture setup only
+        live.execute("INSERT INTO messages (content) VALUES (?)", (message,))
+        live.commit()
+        with sqlite3.connect(hermes.as_uri() + "?mode=ro&immutable=1", uri=True) as main_only:
+            assert main_only.execute("SELECT count(*) FROM messages").fetchone() == (0,)
+        before = {
+            p: hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in (hermes, Path(str(hermes) + "-wal"))
+        }
+        result = backup.run_backup(repo=git_repo)
+        assert result.ok, result.errors
+        envelope = Path(result.private_archive_path).read_bytes()
+        assert message.encode() not in envelope
+        with tarfile.open(
+            fileobj=io.BytesIO(crypto.decrypt_bytes(envelope)), mode="r:gz"
+        ) as archive:
+            assert "hermes/state.db" in archive.getnames()
+            assert not any(
+                "credentials" in name or name.endswith(("-wal", "-shm"))
+                for name in archive.getnames()
+            )
+            restored = tmp_path / "restored-hermes.db"
+            restored.write_bytes(archive.extractfile("hermes/state.db").read())
+            manifest = json.load(archive.extractfile("recovery-manifest.json"))
+            assert manifest["coverage"]["hermes_history"] == {
+                "status": "included",
+                "source": str(hermes),
+                "member": "hermes/state.db",
+            }
+        with sqlite3.connect(restored) as recovered:
+            assert recovered.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
+            assert recovered.execute("SELECT content FROM messages ORDER BY id").fetchall() == [
+                (message,)
+            ]
+        assert before == {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in before}
+    captured = capsys.readouterr()
+    assert message not in captured.out + captured.err
+    assert "SYNTHETIC_CREDENTIAL" not in captured.out + captured.err
+
+
+def test_missing_optional_hermes_is_explicit_in_encrypted_coverage(git_repo):
+    import io
+    import json
+    import tarfile
+    from pathlib import Path
+
+    from dr_alex import history_recall
+
+    result = backup.run_backup(repo=git_repo)
+    assert result.ok, result.errors
+    with tarfile.open(
+        fileobj=io.BytesIO(crypto.decrypt_bytes(Path(result.private_archive_path).read_bytes())),
+        mode="r:gz",
+    ) as archive:
+        assert "hermes/state.db" not in archive.getnames()
+        manifest = json.load(archive.extractfile("recovery-manifest.json"))
+        assert manifest["coverage"]["hermes_history"] == {
+            "status": "missing-optional",
+            "source": str(history_recall.db_path()),
+            "member": None,
+        }
+
+
+@pytest.mark.parametrize("failure", ["missing", "corrupt", "empty", "unreadable", "busy"])
+def test_invalid_hermes_generation_preserves_prior_artifacts(
+    failure, git_repo, tmp_path, monkeypatch, capsys
+):
+    import sqlite3
+    import time
+
+    previous = backup.run_backup(repo=git_repo)
+    assert previous.ok, previous.errors
+    dest = git_repo / "data" / "backups"
+    before = {p.name: p.read_bytes() for p in dest.iterdir()}
+    hermes = tmp_path / "hermes-failure.db"
+    monkeypatch.setenv("DR_ALEX_HERMES_DB", str(hermes))
+    monkeypatch.setattr(backup, "SNAPSHOT_TIMEOUT_SECONDS", 0.1)
+    locked = None
+    if failure == "corrupt":
+        hermes.write_bytes(b"SYNTHETIC_PRIVATE_DATABASE_BODY")
+    elif failure == "empty":
+        hermes.touch()
+    elif failure in ("unreadable", "busy"):
+        locked = sqlite3.connect(hermes)
+        locked.execute("CREATE TABLE messages (content TEXT)")
+        locked.commit()
+        if failure == "unreadable":
+            locked.close()
+            locked = None
+            hermes.chmod(0)
+        else:
+            locked.execute("BEGIN EXCLUSIVE")
+    try:
+        started = time.monotonic()
+        result = backup.run_backup(repo=git_repo)
+        assert time.monotonic() - started < 3
+        assert not result.ok and not result.verified
+        assert result.pruned == 0
+        assert result.bundle_path is None and result.private_archive_path is None
+        assert before == {p.name: p.read_bytes() for p in dest.iterdir()}
+        captured = capsys.readouterr()
+        assert "SYNTHETIC_PRIVATE_DATABASE_BODY" not in captured.out + captured.err + str(
+            result.errors
+        )
+        if failure == "busy":
+            assert any("TimeoutError" in error for error in result.errors)
+    finally:
+        if locked is not None:
+            locked.close()
+        if hermes.exists():
+            hermes.chmod(0o600)
+
+
+def test_private_sqlite_uses_same_deadline_as_hermes(git_repo, tmp_path, monkeypatch):
+    import sqlite3
+    import time
+
+    data = git_repo / "data"
+    data.mkdir()
+    db = data / "private.sqlite"
+    with sqlite3.connect(db) as live:
+        live.execute("CREATE TABLE pending (body TEXT)")
+        live.commit()
+        live.execute("BEGIN EXCLUSIVE")
+        monkeypatch.setattr(backup, "SNAPSHOT_TIMEOUT_SECONDS", 0.1)
+        started = time.monotonic()
+        result = backup.run_backup(repo=git_repo)
+        assert time.monotonic() - started < 3
+        assert not result.ok
+        assert any("TimeoutError" in error for error in result.errors)
+        assert not list((data / "backups").glob("*-dr-alex.bundle"))
+
+
+def test_snapshot_rejects_readable_sqlite_with_broken_index(tmp_path):
+    import sqlite3
+
+    db = tmp_path / "broken-index.db"
+    with sqlite3.connect(db) as source:
+        source.execute("CREATE TABLE messages (body TEXT)")
+        source.execute("CREATE INDEX by_body ON messages(body)")
+        source.execute("INSERT INTO messages VALUES ('synthetic')")
+        source.commit()
+        # A structurally readable database can still fail integrity_check.
+        root = source.execute("SELECT rootpage FROM sqlite_master WHERE name='by_body'").fetchone()[
+            0
+        ]
+        page_size = source.execute("PRAGMA page_size").fetchone()[0]
+    raw = bytearray(db.read_bytes())
+    raw[(root - 1) * page_size + 3 : (root - 1) * page_size + 5] = b"\x00\x00"
+    db.write_bytes(raw)
+    with pytest.raises(sqlite3.DatabaseError, match="integrity check failed"):
+        backup._snapshot_sqlite(db, tmp_path / "snapshot.db")

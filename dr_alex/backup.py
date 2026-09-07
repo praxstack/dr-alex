@@ -25,15 +25,17 @@ import sqlite3
 import subprocess
 import tarfile
 import tempfile
+import time
 from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from dr_alex import config, crypto, statedb
+from dr_alex import config, crypto, history_recall, statedb
 
 _log = logging.getLogger("dr_alex.backup")
 
 RETENTION = 14  # keep the 14 most-recent bundles (+ their state.db snapshots)
+SNAPSHOT_TIMEOUT_SECONDS = 30.0
 
 
 @dataclass
@@ -94,6 +96,32 @@ def _prune(dest: Path, errors: list[str]) -> int:
     return pruned
 
 
+def _snapshot_sqlite(db: Path, snapshot: Path) -> None:
+    """Copy committed pages read-only, with a deadline shared by backup and validation."""
+    deadline = time.monotonic() + SNAPSHOT_TIMEOUT_SECONDS
+
+    def check_deadline(*_progress: int) -> None:
+        if time.monotonic() >= deadline:
+            raise TimeoutError("SQLite snapshot deadline exceeded")
+
+    if db.stat().st_size == 0:
+        raise sqlite3.DatabaseError("empty SQLite source")
+    snapshot.unlink(missing_ok=True)
+    with (
+        closing(
+            sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.05)
+        ) as source,
+        closing(sqlite3.connect(snapshot, timeout=0.05)) as target,
+    ):
+        check_deadline()
+        source.backup(target, pages=256, progress=check_deadline, sleep=0.05)
+        check_deadline()
+        target.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
+        if target.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
+            raise sqlite3.DatabaseError("SQLite snapshot integrity check failed")
+        check_deadline()
+
+
 def run_backup(*, now: _dt.datetime | None = None, repo: Path | None = None) -> BackupResult:
     """Create + verify a bundle and an encrypted state.db snapshot; prune to 14. Never raises."""
     repo = repo or repo_root()
@@ -147,13 +175,7 @@ def run_backup(*, now: _dt.datetime | None = None, repo: Path | None = None) -> 
         try:
             with tempfile.TemporaryDirectory(prefix="dr-alex-snapshot-") as tmp:
                 consistent = Path(tmp) / "state.db"
-                with (
-                    closing(
-                        sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True)
-                    ) as source,
-                    closing(sqlite3.connect(consistent)) as target,
-                ):
-                    source.backup(target)
+                _snapshot_sqlite(db, consistent)
                 snap.write_bytes(crypto.encrypt_bytes(consistent.read_bytes()))
             os.chmod(snap, 0o600)
             snapshot_path = str(snap)
@@ -185,24 +207,33 @@ def run_backup(*, now: _dt.datetime | None = None, repo: Path | None = None) -> 
                         candidate = file
                         if file.suffix in (".db", ".sqlite", ".sqlite3"):
                             candidate = Path(tmp) / "snapshot.db"
-                            if candidate.exists():
-                                candidate.unlink()
-                            with (
-                                closing(
-                                    sqlite3.connect(file.resolve().as_uri() + "?mode=ro", uri=True)
-                                ) as source,
-                                closing(sqlite3.connect(candidate)) as target,
-                            ):
-                                source.backup(target)
+                            _snapshot_sqlite(file, candidate)
                         archive.add(candidate, arcname=name, recursive=False)
                         added.add(file.resolve())
                 active = config.active_file_path()
                 if active.is_file() and active.resolve() not in added:
                     archive.add(active.resolve(), arcname="records/Active-File.md", recursive=False)
+                hermes = history_recall.db_path()
+                hermes_coverage = {
+                    "status": "missing-optional",
+                    "source": str(hermes.resolve()),
+                    "member": None,
+                }
+                try:
+                    hermes.stat()
+                except FileNotFoundError:
+                    if history_recall.HERMES_DB_ENV in os.environ:
+                        raise
+                else:
+                    consistent = Path(tmp) / "hermes.db"
+                    _snapshot_sqlite(hermes, consistent)
+                    archive.add(consistent, arcname="hermes/state.db", recursive=False)
+                    hermes_coverage.update(status="included", member="hermes/state.db")
                 manifest = json.dumps(
                     {
                         "version": 1,
                         "created_at": ts,
+                        "coverage": {"hermes_history": hermes_coverage},
                         "repo": str(repo.resolve()),
                         "state_db": str(db.resolve()),
                         "records_dir": str(config.records_dir().resolve()),
