@@ -141,9 +141,11 @@ and skips matching values, so you can retry after a partial Keychain write. Rest
 after restoration, then verify the matching backup generation before relying on it. Keychain
 continues to own runtime keys. Export a new kit if you rotate either key.
 
-The recovery tests use synthetic archives and temporary identities. Personal key escrow and
-off-device recovery remain unverified until you choose storage, export your kit, and test
-your recovery path.
+The recovery tests use synthetic archives and temporary identities for security and failure
+paths. A separate native `age` round-trip integration check runs when `age` and `age-keygen`
+are available and reports an explicit skip otherwise. Personal key escrow and off-device
+recovery remain unverified until you choose storage, export your kit, and test your recovery
+path.
 
 Current repair evidence and the open subagent evaluation matrix live in
 [docs/repair-2026-09-06](docs/repair-2026-09-06/).

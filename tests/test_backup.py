@@ -311,7 +311,15 @@ def test_invalid_hermes_generation_preserves_prior_artifacts(
         if failure == "unreadable":
             locked.close()
             locked = None
-            hermes.chmod(0)
+            real_connect = sqlite3.connect
+            source_uri = hermes.resolve().as_uri()
+
+            def unreadable_source(database, *args, **kwargs):
+                if str(database).startswith(source_uri):
+                    raise PermissionError("synthetic unreadable SQLite source")
+                return real_connect(database, *args, **kwargs)
+
+            monkeypatch.setattr(sqlite3, "connect", unreadable_source)
         else:
             locked.execute("BEGIN EXCLUSIVE")
     try:
@@ -331,8 +339,6 @@ def test_invalid_hermes_generation_preserves_prior_artifacts(
     finally:
         if locked is not None:
             locked.close()
-        if hermes.exists():
-            hermes.chmod(0o600)
 
 
 def test_private_sqlite_uses_same_deadline_as_hermes(git_repo, tmp_path, monkeypatch):

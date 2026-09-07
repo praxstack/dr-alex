@@ -6,20 +6,43 @@ import base64
 import io
 import json
 import os
+import shutil
 import stat
 import subprocess
 import tarfile
+from pathlib import Path
 
 import keyring
 import pytest
 
-from dr_alex import cli, crypto
+from dr_alex import cli, crypto, recovery_kit
 
 STATE_KEY = base64.urlsafe_b64encode(bytes(range(32)))
 KEYS = {
     "state-key": base64.b64encode(STATE_KEY).decode(),
     "pairing-key": base64.b64encode(bytes(reversed(range(32)))).decode(),
 }
+_FAKE_AGE_HEADER = b"age-encryption.org/v1\n"
+_FAKE_IDENTITY = "SYNTHETIC-AGE-IDENTITY\n"
+_NATIVE_AGE = shutil.which("age")
+_NATIVE_AGE_KEYGEN = shutil.which("age-keygen")
+
+
+def _fake_age_run(argv, *, input, **_kwargs):
+    if "--encrypt" in argv:
+        return subprocess.CompletedProcess(
+            argv, 0, stdout=_FAKE_AGE_HEADER + base64.b64encode(input), stderr=b""
+        )
+    if "--decrypt" in argv:
+        identity = argv[argv.index("--identity") + 1]
+        if Path(identity).read_text(encoding="utf-8") != _FAKE_IDENTITY:
+            return subprocess.CompletedProcess(argv, 1, stdout=b"", stderr=b"synthetic")
+        try:
+            plaintext = base64.b64decode(input.removeprefix(_FAKE_AGE_HEADER), validate=True)
+        except (ValueError, UnicodeError):
+            return subprocess.CompletedProcess(argv, 1, stdout=b"", stderr=b"synthetic")
+        return subprocess.CompletedProcess(argv, 0, stdout=plaintext, stderr=b"")
+    raise AssertionError(f"unexpected synthetic age argv: {argv}")
 
 
 @pytest.fixture
@@ -37,15 +60,32 @@ def store(monkeypatch):
 @pytest.fixture
 def identity(tmp_path):
     target = tmp_path / "identity.txt"
-    subprocess.run(["age-keygen", "-o", str(target)], capture_output=True, check=True, timeout=10)
+    target.write_text(_FAKE_IDENTITY, encoding="utf-8")
+    return target, "age1" + "a" * 58
+
+
+@pytest.fixture
+def native_identity(tmp_path):
+    if _NATIVE_AGE is None or _NATIVE_AGE_KEYGEN is None:
+        pytest.skip("native age and age-keygen unavailable; native integration skipped")
+    target = tmp_path / "identity.txt"
+    subprocess.run(
+        [_NATIVE_AGE_KEYGEN, "-o", str(target)], capture_output=True, check=True, timeout=10
+    )
     recipient = (
         subprocess.run(
-            ["age-keygen", "-y", str(target)], capture_output=True, check=True, timeout=10
+            [_NATIVE_AGE_KEYGEN, "-y", str(target)], capture_output=True, check=True, timeout=10
         )
         .stdout.decode()
         .strip()
     )
     return target, recipient
+
+
+@pytest.fixture(autouse=True)
+def synthetic_age_boundary(monkeypatch, request):
+    if "native_identity" not in request.fixturenames:
+        monkeypatch.setattr(recovery_kit.subprocess, "run", _fake_age_run)
 
 
 def _export(target, recipient):
@@ -59,10 +99,10 @@ def _restore(target, identity):
 
 
 def test_public_recovery_kit_restores_archive_without_original_store(
-    tmp_path, monkeypatch, store, identity
+    tmp_path, monkeypatch, store, native_identity
 ):
     monkeypatch.setattr(cli, "_print_oneshot", lambda text: 91)
-    key_file, recipient = identity
+    key_file, recipient = native_identity
     kit = tmp_path / "kit.age"
     content = io.BytesIO()
     with tarfile.open(fileobj=content, mode="w") as archive:
@@ -119,9 +159,7 @@ def test_restore_failure_never_changes_destination_keys(tmp_path, store, identit
     store.clear()
     if failure == "wrong_identity":
         key_file = tmp_path / "wrong.txt"
-        subprocess.run(
-            ["age-keygen", "-o", str(key_file)], capture_output=True, check=True, timeout=10
-        )
+        key_file.write_text("WRONG-SYNTHETIC-IDENTITY\n", encoding="utf-8")
     elif failure == "corrupt":
         kit.write_bytes(kit.read_bytes()[:-10])
     else:
@@ -153,13 +191,7 @@ def test_invalid_decrypted_payload_is_rejected_before_any_key_write(
     if failure == "duplicate":
         raw = raw.replace('"version": 1', '"version": 2, "version": 1')
     kit = tmp_path / "kit.age"
-    encrypted = subprocess.run(
-        ["age", "--encrypt", "--recipient", recipient],
-        input=raw.encode(),
-        capture_output=True,
-        check=True,
-        timeout=10,
-    ).stdout
+    encrypted = recovery_kit._age(["--encrypt", "--recipient", recipient], raw.encode())
     kit.write_bytes(encrypted)
     store.clear()
     assert _restore(kit, key_file) == 1
