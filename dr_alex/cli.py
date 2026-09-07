@@ -16,6 +16,8 @@ Modes
     dr-alex books ingest  (re)build the book index from the corpus
     dr-alex books status  show the corpus manifest + index state
     dr-alex backup        G19 durability: git bundle + encrypted state.db snapshot
+    dr-alex recovery-kit export|restore --help
+                          explicit age-encrypted backup key export / Keychain restore
     dr-alex eval --once   G13 nightly eval (relative drift); normally run by the (disabled) cron
     dr-alex improve --once [--dry-run]
                           G22 nightly persona keep-or-revert loop (propose→gate→benchmark→keep)
@@ -515,6 +517,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args and args[0] == "backup":
         return _backup_command()
+
+    if args and args[0] == "recovery-kit":
+        from dr_alex import recovery_kit
+
+        return recovery_kit.main(args[1:])
 
     if args and args[0] == "eval":
         return _eval_command(args[1:])

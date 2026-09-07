@@ -82,6 +82,8 @@ def _spawning_functions() -> list[tuple[str, str]]:
 #                                           the single revertible keep). NEVER the model, never
 #                                           push (R1: this repo has no remote). Its propose/judge
 #                                           meta-calls route through dr_alex.llm.complete, not here.
+#   - dr_alex/recovery_kit.py::_age        — explicit local age key-kit encryption/decryption;
+#                                           fixed age binary, secrets via stdin, no model call.
 _SANCTIONED_SPAWNS = {
     ("dr_alex/llm.py", "complete"),
     ("dr_alex/memstore.py", "_run"),
@@ -91,6 +93,7 @@ _SANCTIONED_SPAWNS = {
     ("dr_alex/voice.py", "_spawn_ffmpeg_capture"),
     ("dr_alex/voice.py", "_run_whisper_cpp"),
     ("dr_alex/improve.py", "_run_git"),
+    ("dr_alex/recovery_kit.py", "_age"),
 }
 
 
